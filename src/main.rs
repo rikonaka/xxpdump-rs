@@ -185,7 +185,7 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
         sf
     } else {
         // do nothing here
-        let sf = match cap.savefile(path) {
+        let sf = match cap.savefile(&path) {
             Ok(sf) => sf,
             Err(e) => panic!("set save file path [{}] failed: {}", path, e),
         };
@@ -203,7 +203,7 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
 
         // file_size paramter
         if file_size_flag {
-            let (ind, new_path) = check_savefile_size(new_file_suffix_ind, path);
+            let (ind, new_path) = check_savefile_size(new_file_suffix_ind, &path);
             if *path != new_path {
                 new_file_suffix_ind = ind;
                 let new_sf = match cap.savefile(new_path) {
