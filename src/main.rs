@@ -13,6 +13,8 @@ use tracing::info;
 use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
 
+mod filter;
+
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
 // The default is 1000000. This should always be larger than the snaplen.
@@ -125,6 +127,7 @@ fn file_size_parser(file_size: &str) -> u64 {
                 panic!("wrong unit [{}]", unit);
             }
         };
+        debug!("finial file size [{}] bytes", final_file_size);
         final_file_size
     } else {
         0
@@ -132,7 +135,7 @@ fn file_size_parser(file_size: &str) -> u64 {
 }
 
 fn local_capture(mut cap: Capture<Active>, args: &Args) {
-    let mut path = args.path.clone();
+    let path = &args.path;
     let file_size = &args.file_size;
     let count = args.count;
 
@@ -141,22 +144,32 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
     debug!("open save file path");
 
     /* some closure here */
-    let get_savefile_size = |path: &str| -> u64 {
-        let metadata = match fs::metadata(path) {
-            Ok(m) => m,
-            Err(e) => panic!("get [{}] file metadata failed: {}", path, e),
-        };
-        metadata.len()
+    let get_savefile_size = |target_file: &str| -> u64 {
+        match fs::metadata(target_file) {
+            Ok(m) => {
+                if m.is_file() {
+                    m.len()
+                } else {
+                    panic!("save file path [{}] is not file", target_file);
+                }
+            }
+            Err(_) => 0, // file not exists, ignore the error
+        }
     };
-    let check_savefile_size = |ind: usize, path: &str| -> (usize, String) {
+    let combine_filename = |ind: usize| -> String {
+        let filename = format!("{}.{}", ind, &path);
+        filename
+    };
+    let check_savefile_size = |ind: usize| -> usize {
         let mut i = ind;
         loop {
-            let new_path = format!("{}.{}", i, path);
-            let savefile_size = get_savefile_size(&new_path);
+            let target_file = combine_filename(i);
+            let savefile_size = get_savefile_size(&target_file);
+            debug!("target file [{}] size is [{}]", target_file, savefile_size);
             if savefile_size > file_size_bytes {
                 i += 1;
             } else {
-                return (i, new_path);
+                return i;
             }
         }
     };
@@ -174,14 +187,14 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
 
     /* file_size */
     let file_size_flag = if file_size.len() > 0 { true } else { false };
-    let mut new_file_suffix_ind = 0;
+    let mut file_suffix_ind = 0;
     let mut sf = if file_size_flag {
-        let new_path = format!("{}.{}", new_file_suffix_ind, path);
+        let new_path = format!("{}.{}", file_suffix_ind, path);
+        debug!("file_size enabled, new save path [{}]", &new_path);
         let sf = match cap.savefile(&new_path) {
             Ok(sf) => sf,
             Err(e) => panic!("set save file path [{}] failed: {}", new_path, e),
         };
-        path = new_path;
         sf
     } else {
         // do nothing here
@@ -203,25 +216,33 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
 
         // file_size paramter
         if file_size_flag {
-            let (ind, new_path) = check_savefile_size(new_file_suffix_ind, &path);
-            if *path != new_path {
-                new_file_suffix_ind = ind;
-                let new_sf = match cap.savefile(new_path) {
+            let after_check_ind = check_savefile_size(file_suffix_ind);
+            // debug!("after check ind [{}]", after_check_ind);
+            let new_path = combine_filename(after_check_ind);
+            if after_check_ind > file_suffix_ind {
+                file_suffix_ind = after_check_ind;
+                let new_sf = match cap.savefile(&new_path) {
                     Ok(sf) => sf,
                     Err(e) => panic!("set save file path failed: {}", e),
                 };
+                debug!("change save file to [{}]", new_path);
                 sf = new_sf;
             }
         }
 
         match cap.next_packet() {
             Ok(packet) => {
-                debug!("received packet, len: {}", packet.len());
+                debug!("received packet len: {}", packet.len());
                 match PACKETS_CAPTURED.lock() {
                     Ok(mut p) => *p += 1,
                     Err(e) => error!("update the PACKETS_CAPTURED failed: {}", e),
                 }
                 sf.write(&packet);
+                // write packet to file immediately
+                match sf.flush() {
+                    Ok(_) => (),
+                    Err(e) => error!("flush error: {}", e),
+                }
             }
             Err(e) => warn!("capture error: {}", e),
         }
