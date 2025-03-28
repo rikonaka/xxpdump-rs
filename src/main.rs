@@ -54,9 +54,17 @@ struct Args {
     #[arg(long, action, default_value = "true")]
     immediate: bool,
 
-    /// Set the read timeout for the Capture, by default, this is 0 so it will block indefinitely
+    /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
     #[arg(short, long, default_value_t = 0)]
     timeout: i32,
+
+    /// Set the filter when saving the packet, e.g. --filter ip=192.168.1.1 and port=80, please use --filter-examples to show more examples
+    #[arg(short, long, default_value = "")]
+    filter: String,
+
+    /// Show the filter parameter more examples
+    #[arg(long, action, default_value = "false")]
+    filter_examples: bool,
 
     /// Set the program work mode, by default, this is 'local' mode and save traffic file in local storege
     #[arg(short, long, default_value = "local")]
@@ -237,6 +245,8 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
                     Ok(mut p) => *p += 1,
                     Err(e) => error!("update the PACKETS_CAPTURED failed: {}", e),
                 }
+
+                let packet_vec = packet.to_vec();
                 sf.write(&packet);
                 // write packet to file immediately
                 match sf.flush() {
@@ -244,7 +254,7 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
                     Err(e) => error!("flush error: {}", e),
                 }
             }
-            Err(e) => warn!("capture error: {}", e),
+            Err(e) => error!("capture error: {}", e),
         }
     }
     // infinite loop cannot reach here
@@ -307,6 +317,10 @@ fn main() {
 
     if args.list_interface {
         list_interface(&devices);
+        std::process::exit(0);
+    }
+
+    if args.filter_examples {
         std::process::exit(0);
     }
 
