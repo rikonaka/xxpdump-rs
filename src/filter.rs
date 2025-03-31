@@ -12,7 +12,10 @@ use pnet::packet::udp::UdpPacket;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
+use std::ops::Index;
+use std::sync::LazyLock;
 use tracing::error;
+use tracing::info;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Protocol {
@@ -21,7 +24,7 @@ pub enum Protocol {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum FilterType {
+pub enum Filter {
     SrcMac(MacAddr),
     DstMac(MacAddr),
     Mac(MacAddr),
@@ -33,12 +36,6 @@ pub enum FilterType {
     Port(u16),
     Protocol(Protocol),
 }
-
-#[derive(Debug, Clone)]
-pub struct Filter {
-    pub filter_type: FilterType,
-}
-
 struct PacketMac {
     src_mac: MacAddr,
     dst_mac: MacAddr,
@@ -59,7 +56,7 @@ struct PacketPort {
     dst_port: u16,
 }
 
-impl FilterType {
+impl Filter {
     fn get_mac(&self, packet: &[u8]) -> Option<PacketMac> {
         let ethernet_packet = match EthernetPacket::new(&packet) {
             Some(ethernet_packet) => ethernet_packet,
@@ -213,7 +210,7 @@ impl FilterType {
     }
     pub fn check(&self, packet: &[u8]) -> bool {
         match *self {
-            FilterType::SrcMac(mac) => match self.get_mac(packet) {
+            Filter::SrcMac(mac) => match self.get_mac(packet) {
                 Some(packet_mac) => {
                     if mac == packet_mac.src_mac {
                         true
@@ -223,7 +220,7 @@ impl FilterType {
                 }
                 None => false,
             },
-            FilterType::DstMac(mac) => match self.get_mac(packet) {
+            Filter::DstMac(mac) => match self.get_mac(packet) {
                 Some(packet_mac) => {
                     if mac == packet_mac.dst_mac {
                         true
@@ -233,7 +230,7 @@ impl FilterType {
                 }
                 None => false,
             },
-            FilterType::Mac(mac) => match self.get_mac(packet) {
+            Filter::Mac(mac) => match self.get_mac(packet) {
                 Some(packet_mac) => {
                     if mac == packet_mac.src_mac || mac == packet_mac.dst_mac {
                         true
@@ -243,7 +240,7 @@ impl FilterType {
                 }
                 None => false,
             },
-            FilterType::SrcAddr(addr) => match addr {
+            Filter::SrcAddr(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.src_ipv4 {
@@ -265,7 +262,7 @@ impl FilterType {
                     None => false,
                 },
             },
-            FilterType::DstAddr(addr) => match addr {
+            Filter::DstAddr(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.dst_ipv4 {
@@ -287,7 +284,7 @@ impl FilterType {
                     None => false,
                 },
             },
-            FilterType::Addr(addr) => match addr {
+            Filter::Addr(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.src_ipv4
@@ -313,7 +310,7 @@ impl FilterType {
                     None => false,
                 },
             },
-            FilterType::SrcPort(port) => match self.get_ipv4_tcp_udp_port(packet) {
+            Filter::SrcPort(port) => match self.get_ipv4_tcp_udp_port(packet) {
                 Some(packet_port) => {
                     if port == packet_port.src_port {
                         true
@@ -323,7 +320,7 @@ impl FilterType {
                 }
                 None => false,
             },
-            FilterType::DstPort(port) => match self.get_ipv4_tcp_udp_port(packet) {
+            Filter::DstPort(port) => match self.get_ipv4_tcp_udp_port(packet) {
                 Some(packet_port) => {
                     if port == packet_port.dst_port {
                         true
@@ -333,7 +330,7 @@ impl FilterType {
                 }
                 None => false,
             },
-            FilterType::Port(port) => match self.get_ipv4_tcp_udp_port(packet) {
+            Filter::Port(port) => match self.get_ipv4_tcp_udp_port(packet) {
                 Some(packet_port) => {
                     if port == packet_port.src_port || port == packet_port.dst_port {
                         true
@@ -343,7 +340,7 @@ impl FilterType {
                 }
                 None => false,
             },
-            FilterType::Protocol(protocol) => match protocol {
+            Filter::Protocol(protocol) => match protocol {
                 Protocol::Layer3(layer3_protocol) => match self.get_layer3_protocol(packet) {
                     Some(p) => {
                         if p == layer3_protocol {
@@ -373,7 +370,7 @@ impl FilterType {
             },
         }
     }
-    pub fn parser(input: &str) -> Option<FilterType> {
+    pub fn parser(input: &str) -> Option<Filter> {
         let input_split: Vec<&str> = input.split("=").map(|x| x.trim()).collect();
         if input_split.len() == 2 {
             // ip=192.168.1.1 => ['ip', '192.168.1.1']
@@ -389,11 +386,11 @@ impl FilterType {
                         ),
                     };
                     if filter_name == "mac" {
-                        Some(FilterType::Mac(mac))
+                        Some(Filter::Mac(mac))
                     } else if filter_name == "srcmac" {
-                        Some(FilterType::SrcMac(mac))
+                        Some(Filter::SrcMac(mac))
                     } else {
-                        Some(FilterType::DstMac(mac))
+                        Some(Filter::DstMac(mac))
                     }
                 }
                 "ip" | "srcip" | "dstip" => {
@@ -405,11 +402,11 @@ impl FilterType {
                         ),
                     };
                     if filter_name == "ip" {
-                        Some(FilterType::Addr(ip_addr))
+                        Some(Filter::Addr(ip_addr))
                     } else if filter_name == "srcip" {
-                        Some(FilterType::SrcAddr(ip_addr))
+                        Some(Filter::SrcAddr(ip_addr))
                     } else {
-                        Some(FilterType::DstAddr(ip_addr))
+                        Some(Filter::DstAddr(ip_addr))
                     }
                 }
                 "port" | "srcport" | "dstport" => {
@@ -418,21 +415,381 @@ impl FilterType {
                         Err(e) => panic!("convert [{}] to u16 failed: {}", filter_parameter, e),
                     };
                     if filter_name == "port" {
-                        Some(FilterType::Port(port))
+                        Some(Filter::Port(port))
                     } else if filter_name == "srcport" {
-                        Some(FilterType::SrcPort(port))
+                        Some(Filter::SrcPort(port))
                     } else {
-                        Some(FilterType::DstPort(port))
+                        Some(Filter::DstPort(port))
                     }
                 }
                 "procotol" => {
                     // wait
+                    let procotol = procotol_parser(filter_parameter);
+                    Some(Filter::Protocol(procotol))
                 }
                 _ => None,
             }
         } else {
             None
         }
+    }
+}
+
+static PROCOTOL_NAME: LazyLock<Vec<&str>> = LazyLock::new(|| {
+    vec![
+        "Ipv4",
+        "Arp",
+        "WakeOnLan",
+        "Trill",
+        "DECnet",
+        "Rarp",
+        "AppleTalk",
+        "Aarp",
+        "Ipx",
+        "Qnx", // Qnx Qnet
+        "Ipv6",
+        "FlowControl",
+        "CobraNet",
+        "Mpls",
+        "MplsMcast",
+        "PppoeDiscovery",
+        "PppoeSession",
+        "Vlan",
+        "PBridge",
+        "Lldp",
+        "PtpoE", // Precision Time Protocol (PTP) over Ethernet
+        "Cfm",
+        "QinQ",
+        "Hopopt",
+        "Icmp",
+        "Igmp",
+        "Ggp",
+        "Ipv4encapsulation", // encapsulation
+        "St",
+        "Tcp",
+        "Cbt",
+        "Egp",
+        "Igp",
+        "BbnRccMon",
+        "NvpII",
+        "Pup",
+        "Argus",
+        "Emcon",
+        "Xnet",
+        "Chaos",
+        "Udp",
+        "Mux",
+        "DcnMeas",
+        "Hmp",
+        "Prm",
+        "XnsIdp",
+        "Trunk1",
+        "Trunk2",
+        "Leaf1",
+        "Leaf2",
+        "Rdp",
+        "Irtp",
+        "IsoTp4",
+        "Netblt",
+        "MfeNsp",
+        "MeritInp",
+        "Dccp",
+        "ThreePc",
+        "Idpr",
+        "Xtp",
+        "Ddp",
+        "IdprCmtp",
+        "TpPlusPlus",
+        "Il",
+        "Ipv6encapsulation", // encapsulation
+        "Sdrp",
+        "Ipv6Route",
+        "Ipv6Frag",
+        "Idrp",
+        "Rsvp",
+        "Gre",
+        "Dsr",
+        "Bna",
+        "Esp",
+        "Ah",
+        "INlsp",
+        "Swipe",
+        "Narp",
+        "Mobile",
+        "Tlsp",
+        "Skip",
+        "Icmpv6",
+        "Ipv6NoNxt",
+        "Ipv6Opts",
+        "HostInternal",
+        "Cftp",
+        "LocalNetwork",
+        "SatExpak",
+        "Kryptolan",
+        "Rvd",
+        "Ippc",
+        "DistributedFs",
+        "SatMon",
+        "Visa",
+        "Ipcv",
+        "Cpnx",
+        "Cphb",
+        "Wsn",
+        "Pvp",
+        "BrSatMon",
+        "SunNd",
+        "WbMon",
+        "WbExpak",
+        "IsoIp",
+        "Vmtp",
+        "SecureVmtp",
+        "Vines",
+        "TtpOrIptm",
+        "NsfnetIgp",
+        "Dgp",
+        "Tcf",
+        "Eigrp",
+        "OspfigP",
+        "SpriteRpc",
+        "Larp",
+        "Mtp",
+        "Ax25",
+        "IpIp",
+        "Micp",
+        "SccSp",
+        "Etherip",
+        "Encap",
+        "PrivEncryption",
+        "Gmtp",
+        "Ifmp",
+        "Pnni",
+        "Pim",
+        "Aris",
+        "Scps",
+        "Qnx2", // In order to distinguish it from the previous Qnx, Qnx is named Qnx2 here.
+        "AN",
+        "IpComp",
+        "Snp",
+        "CompaqPeer",
+        "IpxInIp",
+        "Vrrp",
+        "Pgm",
+        "ZeroHop",
+        "L2tp",
+        "Ddx",
+        "Iatp",
+        "Stp",
+        "Srp",
+        "Uti",
+        "Smp",
+        "Sm",
+        "Ptp", // Performance Transparency Protocol
+        "IsisOverIpv4",
+        "Fire",
+        "Crtp",
+        "Crudp",
+        "Sscopmce",
+        "Iplt",
+        "Sps",
+        "Pipe",
+        "Sctp",
+        "Fc",
+        "RsvpE2eIgnore",
+        "MobilityHeader",
+        "UdpLite",
+        "MplsInIp",
+        "Manet",
+        "Hip",
+        "Shim6",
+        "Wesp",
+        "Rohc",
+        "Test1",
+        "Test2",
+        "Reserved",
+    ]
+});
+
+static PROCOTOL_TYPE: LazyLock<Vec<Protocol>> = LazyLock::new(|| {
+    vec![
+        Protocol::Layer3(EtherTypes::Ipv4),
+        Protocol::Layer3(EtherTypes::Arp),
+        Protocol::Layer3(EtherTypes::WakeOnLan),
+        Protocol::Layer3(EtherTypes::Trill),
+        Protocol::Layer3(EtherTypes::DECnet),
+        Protocol::Layer3(EtherTypes::Rarp),
+        Protocol::Layer3(EtherTypes::AppleTalk),
+        Protocol::Layer3(EtherTypes::Aarp),
+        Protocol::Layer3(EtherTypes::Ipx),
+        Protocol::Layer3(EtherTypes::Qnx),
+        Protocol::Layer3(EtherTypes::Ipv6),
+        Protocol::Layer3(EtherTypes::FlowControl),
+        Protocol::Layer3(EtherTypes::CobraNet),
+        Protocol::Layer3(EtherTypes::Mpls),
+        Protocol::Layer3(EtherTypes::MplsMcast),
+        Protocol::Layer3(EtherTypes::PppoeDiscovery),
+        Protocol::Layer3(EtherTypes::PppoeSession),
+        Protocol::Layer3(EtherTypes::Vlan),
+        Protocol::Layer3(EtherTypes::PBridge),
+        Protocol::Layer3(EtherTypes::Lldp),
+        Protocol::Layer3(EtherTypes::Ptp),
+        Protocol::Layer3(EtherTypes::Cfm),
+        Protocol::Layer3(EtherTypes::QinQ),
+        Protocol::Layer4(IpNextHeaderProtocols::Hopopt),
+        Protocol::Layer4(IpNextHeaderProtocols::Icmp),
+        Protocol::Layer4(IpNextHeaderProtocols::Igmp),
+        Protocol::Layer4(IpNextHeaderProtocols::Ggp),
+        Protocol::Layer4(IpNextHeaderProtocols::Ipv4), // encapsulation
+        Protocol::Layer4(IpNextHeaderProtocols::St),
+        Protocol::Layer4(IpNextHeaderProtocols::Tcp),
+        Protocol::Layer4(IpNextHeaderProtocols::Cbt),
+        Protocol::Layer4(IpNextHeaderProtocols::Egp),
+        Protocol::Layer4(IpNextHeaderProtocols::Igp),
+        Protocol::Layer4(IpNextHeaderProtocols::BbnRccMon),
+        Protocol::Layer4(IpNextHeaderProtocols::NvpII),
+        Protocol::Layer4(IpNextHeaderProtocols::Pup),
+        Protocol::Layer4(IpNextHeaderProtocols::Argus),
+        Protocol::Layer4(IpNextHeaderProtocols::Emcon),
+        Protocol::Layer4(IpNextHeaderProtocols::Xnet),
+        Protocol::Layer4(IpNextHeaderProtocols::Chaos),
+        Protocol::Layer4(IpNextHeaderProtocols::Udp),
+        Protocol::Layer4(IpNextHeaderProtocols::Mux),
+        Protocol::Layer4(IpNextHeaderProtocols::DcnMeas),
+        Protocol::Layer4(IpNextHeaderProtocols::Hmp),
+        Protocol::Layer4(IpNextHeaderProtocols::Prm),
+        Protocol::Layer4(IpNextHeaderProtocols::XnsIdp),
+        Protocol::Layer4(IpNextHeaderProtocols::Trunk1),
+        Protocol::Layer4(IpNextHeaderProtocols::Trunk2),
+        Protocol::Layer4(IpNextHeaderProtocols::Leaf1),
+        Protocol::Layer4(IpNextHeaderProtocols::Leaf2),
+        Protocol::Layer4(IpNextHeaderProtocols::Rdp),
+        Protocol::Layer4(IpNextHeaderProtocols::Irtp),
+        Protocol::Layer4(IpNextHeaderProtocols::IsoTp4),
+        Protocol::Layer4(IpNextHeaderProtocols::Netblt),
+        Protocol::Layer4(IpNextHeaderProtocols::MfeNsp),
+        Protocol::Layer4(IpNextHeaderProtocols::MeritInp),
+        Protocol::Layer4(IpNextHeaderProtocols::Dccp),
+        Protocol::Layer4(IpNextHeaderProtocols::ThreePc),
+        Protocol::Layer4(IpNextHeaderProtocols::Idpr),
+        Protocol::Layer4(IpNextHeaderProtocols::Xtp),
+        Protocol::Layer4(IpNextHeaderProtocols::Ddp),
+        Protocol::Layer4(IpNextHeaderProtocols::IdprCmtp),
+        Protocol::Layer4(IpNextHeaderProtocols::TpPlusPlus),
+        Protocol::Layer4(IpNextHeaderProtocols::Il),
+        Protocol::Layer4(IpNextHeaderProtocols::Ipv6), // encapsulation
+        Protocol::Layer4(IpNextHeaderProtocols::Sdrp),
+        Protocol::Layer4(IpNextHeaderProtocols::Ipv6Route),
+        Protocol::Layer4(IpNextHeaderProtocols::Ipv6Frag),
+        Protocol::Layer4(IpNextHeaderProtocols::Idrp),
+        Protocol::Layer4(IpNextHeaderProtocols::Rsvp),
+        Protocol::Layer4(IpNextHeaderProtocols::Gre),
+        Protocol::Layer4(IpNextHeaderProtocols::Dsr),
+        Protocol::Layer4(IpNextHeaderProtocols::Bna),
+        Protocol::Layer4(IpNextHeaderProtocols::Esp),
+        Protocol::Layer4(IpNextHeaderProtocols::Ah),
+        Protocol::Layer4(IpNextHeaderProtocols::INlsp),
+        Protocol::Layer4(IpNextHeaderProtocols::Swipe),
+        Protocol::Layer4(IpNextHeaderProtocols::Narp),
+        Protocol::Layer4(IpNextHeaderProtocols::Mobile),
+        Protocol::Layer4(IpNextHeaderProtocols::Tlsp),
+        Protocol::Layer4(IpNextHeaderProtocols::Skip),
+        Protocol::Layer4(IpNextHeaderProtocols::Icmpv6),
+        Protocol::Layer4(IpNextHeaderProtocols::Ipv6NoNxt),
+        Protocol::Layer4(IpNextHeaderProtocols::Ipv6Opts),
+        Protocol::Layer4(IpNextHeaderProtocols::HostInternal),
+        Protocol::Layer4(IpNextHeaderProtocols::Cftp),
+        Protocol::Layer4(IpNextHeaderProtocols::LocalNetwork),
+        Protocol::Layer4(IpNextHeaderProtocols::SatExpak),
+        Protocol::Layer4(IpNextHeaderProtocols::Kryptolan),
+        Protocol::Layer4(IpNextHeaderProtocols::Rvd),
+        Protocol::Layer4(IpNextHeaderProtocols::Ippc),
+        Protocol::Layer4(IpNextHeaderProtocols::DistributedFs),
+        Protocol::Layer4(IpNextHeaderProtocols::SatMon),
+        Protocol::Layer4(IpNextHeaderProtocols::Visa),
+        Protocol::Layer4(IpNextHeaderProtocols::Ipcv),
+        Protocol::Layer4(IpNextHeaderProtocols::Cpnx),
+        Protocol::Layer4(IpNextHeaderProtocols::Cphb),
+        Protocol::Layer4(IpNextHeaderProtocols::Wsn),
+        Protocol::Layer4(IpNextHeaderProtocols::Pvp),
+        Protocol::Layer4(IpNextHeaderProtocols::BrSatMon),
+        Protocol::Layer4(IpNextHeaderProtocols::SunNd),
+        Protocol::Layer4(IpNextHeaderProtocols::WbMon),
+        Protocol::Layer4(IpNextHeaderProtocols::WbExpak),
+        Protocol::Layer4(IpNextHeaderProtocols::IsoIp),
+        Protocol::Layer4(IpNextHeaderProtocols::Vmtp),
+        Protocol::Layer4(IpNextHeaderProtocols::SecureVmtp),
+        Protocol::Layer4(IpNextHeaderProtocols::Vines),
+        Protocol::Layer4(IpNextHeaderProtocols::TtpOrIptm),
+        Protocol::Layer4(IpNextHeaderProtocols::NsfnetIgp),
+        Protocol::Layer4(IpNextHeaderProtocols::Dgp),
+        Protocol::Layer4(IpNextHeaderProtocols::Tcf),
+        Protocol::Layer4(IpNextHeaderProtocols::Eigrp),
+        Protocol::Layer4(IpNextHeaderProtocols::OspfigP),
+        Protocol::Layer4(IpNextHeaderProtocols::SpriteRpc),
+        Protocol::Layer4(IpNextHeaderProtocols::Larp),
+        Protocol::Layer4(IpNextHeaderProtocols::Mtp),
+        Protocol::Layer4(IpNextHeaderProtocols::Ax25),
+        Protocol::Layer4(IpNextHeaderProtocols::IpIp),
+        Protocol::Layer4(IpNextHeaderProtocols::Micp),
+        Protocol::Layer4(IpNextHeaderProtocols::SccSp),
+        Protocol::Layer4(IpNextHeaderProtocols::Etherip),
+        Protocol::Layer4(IpNextHeaderProtocols::Encap),
+        Protocol::Layer4(IpNextHeaderProtocols::PrivEncryption),
+        Protocol::Layer4(IpNextHeaderProtocols::Gmtp),
+        Protocol::Layer4(IpNextHeaderProtocols::Ifmp),
+        Protocol::Layer4(IpNextHeaderProtocols::Pnni),
+        Protocol::Layer4(IpNextHeaderProtocols::Pim),
+        Protocol::Layer4(IpNextHeaderProtocols::Aris),
+        Protocol::Layer4(IpNextHeaderProtocols::Scps),
+        Protocol::Layer4(IpNextHeaderProtocols::Qnx),
+        Protocol::Layer4(IpNextHeaderProtocols::AN),
+        Protocol::Layer4(IpNextHeaderProtocols::IpComp),
+        Protocol::Layer4(IpNextHeaderProtocols::Snp),
+        Protocol::Layer4(IpNextHeaderProtocols::CompaqPeer),
+        Protocol::Layer4(IpNextHeaderProtocols::IpxInIp),
+        Protocol::Layer4(IpNextHeaderProtocols::Vrrp),
+        Protocol::Layer4(IpNextHeaderProtocols::Pgm),
+        Protocol::Layer4(IpNextHeaderProtocols::ZeroHop),
+        Protocol::Layer4(IpNextHeaderProtocols::L2tp),
+        Protocol::Layer4(IpNextHeaderProtocols::Ddx),
+        Protocol::Layer4(IpNextHeaderProtocols::Iatp),
+        Protocol::Layer4(IpNextHeaderProtocols::Stp),
+        Protocol::Layer4(IpNextHeaderProtocols::Srp),
+        Protocol::Layer4(IpNextHeaderProtocols::Uti),
+        Protocol::Layer4(IpNextHeaderProtocols::Smp),
+        Protocol::Layer4(IpNextHeaderProtocols::Sm),
+        Protocol::Layer4(IpNextHeaderProtocols::Ptp), // Performance Transparency Protocol
+        Protocol::Layer4(IpNextHeaderProtocols::IsisOverIpv4),
+        Protocol::Layer4(IpNextHeaderProtocols::Fire),
+        Protocol::Layer4(IpNextHeaderProtocols::Crtp),
+        Protocol::Layer4(IpNextHeaderProtocols::Crudp),
+        Protocol::Layer4(IpNextHeaderProtocols::Sscopmce),
+        Protocol::Layer4(IpNextHeaderProtocols::Iplt),
+        Protocol::Layer4(IpNextHeaderProtocols::Sps),
+        Protocol::Layer4(IpNextHeaderProtocols::Pipe),
+        Protocol::Layer4(IpNextHeaderProtocols::Sctp),
+        Protocol::Layer4(IpNextHeaderProtocols::Fc),
+        Protocol::Layer4(IpNextHeaderProtocols::RsvpE2eIgnore),
+        Protocol::Layer4(IpNextHeaderProtocols::MobilityHeader),
+        Protocol::Layer4(IpNextHeaderProtocols::UdpLite),
+        Protocol::Layer4(IpNextHeaderProtocols::MplsInIp),
+        Protocol::Layer4(IpNextHeaderProtocols::Manet),
+        Protocol::Layer4(IpNextHeaderProtocols::Hip),
+        Protocol::Layer4(IpNextHeaderProtocols::Shim6),
+        Protocol::Layer4(IpNextHeaderProtocols::Wesp),
+        Protocol::Layer4(IpNextHeaderProtocols::Rohc),
+        Protocol::Layer4(IpNextHeaderProtocols::Test1),
+        Protocol::Layer4(IpNextHeaderProtocols::Test2),
+        Protocol::Layer4(IpNextHeaderProtocols::Reserved),
+    ]
+});
+
+fn procotol_parser(procotol: &str) -> Protocol {
+    match PROCOTOL_NAME
+        .iter()
+        .position(|&x| x.to_lowercase() == procotol.to_lowercase())
+    {
+        Some(index) => PROCOTOL_TYPE[index],
+        None => panic!("unknown filter procotol [{}]", procotol),
     }
 }
 
@@ -452,43 +809,76 @@ pub enum ShuntingYardElem {
 
 /// shunting yard alg.
 #[derive(Debug, Clone)]
-pub struct FiltersParser {
+pub struct Filters {
     pub output_queue: Vec<ShuntingYardElem>,
     pub operator_stack: Vec<ShuntingYardElem>,
 }
 
-impl FiltersParser {
-    pub fn parser(input: &str) {
+impl Filters {
+    pub fn parser(input: &str) -> Filters {
         let mut output_queue: Vec<ShuntingYardElem> = Vec::new();
         let mut operator_stack: Vec<ShuntingYardElem> = Vec::new();
-        let mut found_space = false;
-        let mut read_part = String::new();
+        let mut statement = String::new();
 
-        for ch in input.chars() {
-            if ch == '(' {
-                operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket));
-            } else if ch == ')' {
-                while let Some(op) = operator_stack.pop() {
-                    match op {
-                        ShuntingYardElem::Operator(o) => match o {
-                            Operator::LeftBracket => break,
-                            _ => output_queue.push(ShuntingYardElem::Operator(o)),
-                        },
-                        _ => error!("should not be here"),
+        let input_chars: Vec<char> = input.chars().collect();
+        let mut i = 0;
+        let i_max = input_chars.len();
+
+        loop {
+            if i > i_max {
+                break;
+            }
+            let ch = input_chars[i];
+            match ch {
+                '(' => operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket)),
+                ')' => {
+                    while let Some(op) = operator_stack.pop() {
+                        match op {
+                            ShuntingYardElem::Operator(o) => match o {
+                                Operator::LeftBracket => break,
+                                _ => output_queue.push(ShuntingYardElem::Operator(o)),
+                            },
+                            _ => error!("should not be here"),
+                        }
                     }
                 }
-            } else if ch == ' ' {
-                if found_space && read_part.len() > 0 {
-                    output_queue.push(read_part);
-                    read_part = String::new();
-                } else {
-                    found_space = true;
+                ' ' => {
+                    if statement.len() > 0 {
+                        // statement like 'ip=192.168.1.1'
+                        let filter = match Filter::parser(&statement) {
+                            Some(f) => f,
+                            None => panic!("filter string [{}] misunderstood", statement),
+                        };
+                        let elem = ShuntingYardElem::Filter(filter);
+                        output_queue.push(elem);
+                        statement.clear();
+                    }
                 }
-            } else {
-                if found_space && ch != ' ' {
-                    read_part.push(ch);
+                'a' | 'n' | 'd' | 'o' | 'r' | 'A' | 'N' | 'D' | 'O' | 'R' => {
+                    // 'and' 'or' operator
+                    if (ch == 'a' || ch == 'A') && i <= i_max - 2 {
+                        let ch_1 = input_chars[i + 1];
+                        let ch_2 = input_chars[i + 2];
+                        if (ch_1 == 'n' || ch_1 == 'N') && (ch_2 == 'd' || ch_2 == 'D') {
+                            output_queue.push(ShuntingYardElem::Operator(Operator::And));
+                        }
+                        i += 2;
+                    } else if (ch == 'o' || ch == 'O') && i <= i_max - 1 {
+                        let ch_1 = input_chars[i + 1];
+                        if ch_1 == 'r' || ch_1 == 'R' {
+                            output_queue.push(ShuntingYardElem::Operator(Operator::Or));
+                        }
+                        i += 1;
+                    }
                 }
+                _ => statement.push(ch),
             }
+            i += 1;
+        }
+
+        Filters {
+            output_queue,
+            operator_stack,
         }
     }
     pub fn examples(show: bool) {
@@ -498,6 +888,18 @@ impl FiltersParser {
             "ip=192.168.1.1 and port=80",
             "(ip=192.168.1.1 and tcp) or port=80",
         ];
+        if show {
+            for e in exs {
+                info!(e);
+            }
+        } else {
+            // test it
+            for e in exs {
+                let filters = Filters::parser(e);
+                println!("{}", e); // for test
+                println!("{:?}", filters); // for test
+            }
+        }
     }
 }
 
@@ -505,5 +907,20 @@ impl FiltersParser {
 mod tests {
     use super::*;
     #[test]
-    fn test_filter_parser() {}
+    fn test_filters_parser() {
+        Filters::examples(false);
+    }
+    #[test]
+    fn test_protocol() {
+        assert_eq!(PROCOTOL_NAME.len(), PROCOTOL_TYPE.len());
+        let mut uniq_procotol_name = Vec::new();
+        for p in PROCOTOL_NAME.iter().map(|p| p.to_string()).into_iter() {
+            if !uniq_procotol_name.contains(&p) {
+                uniq_procotol_name.push(p);
+            } else {
+                println!("not unique value found: {}", p);
+            }
+        }
+        assert_eq!(PROCOTOL_NAME.len(), uniq_procotol_name.len());
+    }
 }

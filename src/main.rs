@@ -10,7 +10,6 @@ use tracing::Level;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
-use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
 
 mod filter;
