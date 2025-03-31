@@ -1,4 +1,5 @@
 use clap::Parser;
+use pcap;
 use pcap::Active;
 use pcap::Capture;
 use pcap::Device;
@@ -10,11 +11,14 @@ use tracing::Level;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
 
 mod filter;
+use filter::Filters;
 
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
+static PACKETS_FILTERED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
 // The default is 1000000. This should always be larger than the snaplen.
 const DEFAULT_BUFFER_SIZE: i32 = 1000000;
@@ -212,6 +216,13 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
         sf
     };
 
+    // filter paramters
+    let filters = if args.filter.len() > 0 {
+        Some(Filters::parser(&args.filter))
+    } else {
+        None
+    };
+
     loop {
         // count parameter
         if finite_loop {
@@ -240,20 +251,41 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
         match cap.next_packet() {
             Ok(packet) => {
                 debug!("received packet len: {}", packet.len());
-                match PACKETS_CAPTURED.lock() {
-                    Ok(mut p) => *p += 1,
-                    Err(e) => error!("update the PACKETS_CAPTURED failed: {}", e),
+                match &filters {
+                    Some(f) => {
+                        if f.calc(&packet) {
+                            match PACKETS_CAPTURED.lock() {
+                                Ok(mut p) => *p += 1,
+                                Err(e) => error!("update the PACKETS_CAPTURED failed: {}", e),
+                            }
+                            sf.write(&packet);
+                        } else {
+                            match PACKETS_FILTERED.lock() {
+                                Ok(mut p) => *p += 1,
+                                Err(e) => error!("update the PACKETS_FILTERED failed: {}", e),
+                            }
+                        }
+                    }
+                    None => {
+                        match PACKETS_CAPTURED.lock() {
+                            Ok(mut p) => *p += 1,
+                            Err(e) => error!("update the PACKETS_CAPTURED failed: {}", e),
+                        }
+                        sf.write(&packet);
+                    }
                 }
 
-                let packet_vec = packet.to_vec();
-                sf.write(&packet);
                 // write packet to file immediately
                 match sf.flush() {
                     Ok(_) => (),
                     Err(e) => error!("flush error: {}", e),
                 }
             }
-            Err(e) => error!("capture error: {}", e),
+            Err(e) => {
+                if e != pcap::Error::TimeoutExpired {
+                    warn!("capture error: {}", e)
+                }
+            }
         }
     }
     // infinite loop cannot reach here
@@ -294,7 +326,14 @@ fn quitting() {
         Ok(p) => *p,
         Err(e) => panic!("try to lock the PACKETS_CAPTURED failed: {}", e),
     };
-    info!("packets captured [{}]", packets_captured);
+    let packets_filtered: usize = match PACKETS_FILTERED.lock() {
+        Ok(p) => *p,
+        Err(e) => panic!("try to lock the PACKETS_FILTERED failed: {}", e),
+    };
+    info!(
+        "packets captured [{}] | packets filtered [{}]",
+        packets_captured, packets_filtered
+    );
     std::process::exit(0);
 }
 
@@ -320,6 +359,7 @@ fn main() {
     }
 
     if args.filter_examples {
+        Filters::examples(true);
         std::process::exit(0);
     }
 

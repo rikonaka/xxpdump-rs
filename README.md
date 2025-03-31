@@ -9,22 +9,12 @@ My reasons are as follows:
 * it does not support automatic file upload to the server
 * and more...
 
-## Dependencies
+## libpcap
 
-Debian
+Why not use libpcap to capture packets?
 
-```bash
-sudo apt install libpcap-dev
-```
+When capturing from the "any" device, or from one of those other devices, in Linux, the libpcap doesn't supply the link-layer header for the real "hardware protocol" like Ethernet, but instead supplies a fake link-layer header for this pseudo-protocol. The [reference 1](https://wiki.wireshark.org/SLL) and [reference 2](https://stackoverflow.com/questions/51358018/linux-cooked-capture-in-packets).
 
-Fedora
+![libpcap problem](./images/libpcap_problem.png)
 
-```bash
-sudo dnf install libpcap-devel
-```
-
-If not running as root, you need to set capabilities like so:
-
-```bash
-sudo setcap cap_net_raw,cap_net_admin=eip path/to/bin
-```
+I have tried running the software from root, but the pseudo header still exists, so I gave up using the pcap library and turned to writing my own.

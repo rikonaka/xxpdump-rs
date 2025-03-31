@@ -12,10 +12,10 @@ use pnet::packet::udp::UdpPacket;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
-use std::ops::Index;
 use std::sync::LazyLock;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Protocol {
@@ -35,6 +35,7 @@ pub enum Filter {
     DstPort(u16),
     Port(u16),
     Protocol(Protocol),
+    CalcRes(bool), // this fileds store the Calc resutl
 }
 struct PacketMac {
     src_mac: MacAddr,
@@ -349,10 +350,7 @@ impl Filter {
                             false
                         }
                     }
-                    None => {
-                        error!("failed to get layer3 protocol");
-                        false
-                    }
+                    None => false,
                 },
                 Protocol::Layer4(layer4_protocol) => match self.get_layer4_protocol(packet) {
                     Some(p) => {
@@ -362,75 +360,84 @@ impl Filter {
                             false
                         }
                     }
-                    None => {
-                        error!("failed to get layer4 protocol");
-                        false
-                    }
+                    None => false,
                 },
             },
+            Filter::CalcRes(b) => b, // do nothing and just return the value
         }
     }
     pub fn parser(input: &str) -> Option<Filter> {
-        let input_split: Vec<&str> = input.split("=").map(|x| x.trim()).collect();
-        if input_split.len() == 2 {
-            // ip=192.168.1.1 => ['ip', '192.168.1.1']
-            let filter_name = input_split[0].to_lowercase();
-            let filter_parameter = input_split[1];
-            match filter_name.as_str() {
-                "mac" | "srcmac" | "dstmac" => {
-                    let mac: MacAddr = match filter_parameter.parse() {
-                        Ok(i) => i,
-                        Err(e) => panic!(
-                            "convert [{}] to MacAddr struct failed: {}",
-                            filter_parameter, e
-                        ),
-                    };
-                    if filter_name == "mac" {
-                        Some(Filter::Mac(mac))
-                    } else if filter_name == "srcmac" {
-                        Some(Filter::SrcMac(mac))
-                    } else {
-                        Some(Filter::DstMac(mac))
+        // two styles:
+        // ip=192.168.1.1
+        // tcp
+        if input.contains("=") {
+            let input_split: Vec<&str> = input.split("=").map(|x| x.trim()).collect();
+            if input_split.len() == 2 {
+                // ip=192.168.1.1 => ['ip', '192.168.1.1']
+                let filter_name = input_split[0].to_lowercase();
+                let filter_parameter = input_split[1];
+                match filter_name.as_str() {
+                    "mac" | "srcmac" | "dstmac" => {
+                        let mac: MacAddr = match filter_parameter.parse() {
+                            Ok(i) => i,
+                            Err(e) => panic!(
+                                "convert [{}] to MacAddr struct failed: {}",
+                                filter_parameter, e
+                            ),
+                        };
+                        if filter_name == "mac" {
+                            Some(Filter::Mac(mac))
+                        } else if filter_name == "srcmac" {
+                            Some(Filter::SrcMac(mac))
+                        } else {
+                            Some(Filter::DstMac(mac))
+                        }
                     }
-                }
-                "ip" | "srcip" | "dstip" => {
-                    let ip_addr: IpAddr = match filter_parameter.parse() {
-                        Ok(i) => i,
-                        Err(e) => panic!(
-                            "convert [{}] to IpAddr struct failed: {}",
-                            filter_parameter, e
-                        ),
-                    };
-                    if filter_name == "ip" {
-                        Some(Filter::Addr(ip_addr))
-                    } else if filter_name == "srcip" {
-                        Some(Filter::SrcAddr(ip_addr))
-                    } else {
-                        Some(Filter::DstAddr(ip_addr))
+                    "ip" | "srcip" | "dstip" => {
+                        let ip_addr: IpAddr = match filter_parameter.parse() {
+                            Ok(i) => i,
+                            Err(e) => panic!(
+                                "convert [{}] to IpAddr struct failed: {}",
+                                filter_parameter, e
+                            ),
+                        };
+                        if filter_name == "ip" {
+                            Some(Filter::Addr(ip_addr))
+                        } else if filter_name == "srcip" {
+                            Some(Filter::SrcAddr(ip_addr))
+                        } else {
+                            Some(Filter::DstAddr(ip_addr))
+                        }
                     }
-                }
-                "port" | "srcport" | "dstport" => {
-                    let port: u16 = match filter_parameter.parse() {
-                        Ok(p) => p,
-                        Err(e) => panic!("convert [{}] to u16 failed: {}", filter_parameter, e),
-                    };
-                    if filter_name == "port" {
-                        Some(Filter::Port(port))
-                    } else if filter_name == "srcport" {
-                        Some(Filter::SrcPort(port))
-                    } else {
-                        Some(Filter::DstPort(port))
+                    "port" | "srcport" | "dstport" => {
+                        let port: u16 = match filter_parameter.parse() {
+                            Ok(p) => p,
+                            Err(e) => panic!("convert [{}] to u16 failed: {}", filter_parameter, e),
+                        };
+                        if filter_name == "port" {
+                            Some(Filter::Port(port))
+                        } else if filter_name == "srcport" {
+                            Some(Filter::SrcPort(port))
+                        } else {
+                            Some(Filter::DstPort(port))
+                        }
                     }
+                    _ => None,
                 }
-                "procotol" => {
-                    // wait
-                    let procotol = procotol_parser(filter_parameter);
-                    Some(Filter::Protocol(procotol))
-                }
-                _ => None,
+            } else {
+                None
             }
         } else {
-            None
+            // protocol
+            let procotol_name_lowcase: Vec<String> =
+                PROCOTOL_NAME.iter().map(|x| x.to_lowercase()).collect();
+
+            if procotol_name_lowcase.contains(&input.to_string()) {
+                let procotol = procotol_parser(input);
+                Some(Filter::Protocol(procotol))
+            } else {
+                None
+            }
         }
     }
 }
@@ -798,7 +805,7 @@ pub enum Operator {
     And,
     Or,
     LeftBracket,
-    RightBracket,
+    // RightBracket,
 }
 
 #[derive(Debug, Clone)]
@@ -811,75 +818,94 @@ pub enum ShuntingYardElem {
 #[derive(Debug, Clone)]
 pub struct Filters {
     pub output_queue: Vec<ShuntingYardElem>,
-    pub operator_stack: Vec<ShuntingYardElem>,
 }
 
 impl Filters {
+    pub fn calc(&self, packet: &[u8]) -> bool {
+        let mut output_queue_rev = self.output_queue.clone();
+        output_queue_rev.reverse();
+        let mut calc_queue = Vec::new();
+        while let Some(sye) = output_queue_rev.pop() {
+            match sye {
+                ShuntingYardElem::Filter(f) => calc_queue.push(f),
+                ShuntingYardElem::Operator(o) => {
+                    let f1 = match calc_queue.pop() {
+                        Some(f) => f,
+                        None => panic!("the f1 should have value"),
+                    };
+                    let f2 = match calc_queue.pop() {
+                        Some(f) => f,
+                        None => panic!("the f2 should have value"),
+                    };
+                    match o {
+                        Operator::And => {
+                            let ret = f1.check(packet) & f2.check(packet);
+                            calc_queue.push(Filter::CalcRes(ret));
+                        }
+                        Operator::Or => {
+                            let ret = f1.check(packet) | f2.check(packet);
+                            calc_queue.push(Filter::CalcRes(ret));
+                        }
+                        _ => warn!("the operator [{:?}] is not allowed", o),
+                    }
+                }
+            }
+        }
+        match calc_queue.pop() {
+            Some(f) => match f {
+                Filter::CalcRes(b) => b,
+                _ => f.check(packet),
+            },
+            None => {
+                error!("calc queue should have value");
+                false
+            }
+        }
+    }
     pub fn parser(input: &str) -> Filters {
         let mut output_queue: Vec<ShuntingYardElem> = Vec::new();
         let mut operator_stack: Vec<ShuntingYardElem> = Vec::new();
         let mut statement = String::new();
 
-        let input_chars: Vec<char> = input.chars().collect();
-        let mut i = 0;
-        let i_max = input_chars.len();
-
-        loop {
-            if i > i_max {
-                break;
+        let input_split: Vec<&str> = input.split(" ").filter(|&x| x.trim().len() > 0).collect();
+        for s in input_split {
+            match s {
+                "and" => operator_stack.push(ShuntingYardElem::Operator(Operator::And)),
+                "or" => operator_stack.push(ShuntingYardElem::Operator(Operator::Or)),
+                _ => {
+                    for ch in s.chars() {
+                        if ch == '(' {
+                            // '{' and '[' is illega chars
+                            operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket));
+                        } else if ch == ')' {
+                            while let Some(op) = operator_stack.pop() {
+                                match op {
+                                    ShuntingYardElem::Operator(o) => {
+                                        if o == Operator::LeftBracket {
+                                            break;
+                                        } else {
+                                            output_queue.push(op);
+                                        }
+                                    }
+                                    _ => output_queue.push(op),
+                                }
+                            }
+                        } else {
+                            statement.push(ch);
+                        }
+                    }
+                }
             }
-            let ch = input_chars[i];
-            match ch {
-                '(' => operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket)),
-                ')' => {
-                    while let Some(op) = operator_stack.pop() {
-                        match op {
-                            ShuntingYardElem::Operator(o) => match o {
-                                Operator::LeftBracket => break,
-                                _ => output_queue.push(ShuntingYardElem::Operator(o)),
-                            },
-                            _ => error!("should not be here"),
-                        }
-                    }
-                }
-                ' ' => {
-                    if statement.len() > 0 {
-                        // statement like 'ip=192.168.1.1'
-                        let filter = match Filter::parser(&statement) {
-                            Some(f) => f,
-                            None => panic!("filter string [{}] misunderstood", statement),
-                        };
-                        let elem = ShuntingYardElem::Filter(filter);
-                        output_queue.push(elem);
-                        statement.clear();
-                    }
-                }
-                'a' | 'n' | 'd' | 'o' | 'r' | 'A' | 'N' | 'D' | 'O' | 'R' => {
-                    // 'and' 'or' operator
-                    if (ch == 'a' || ch == 'A') && i <= i_max - 2 {
-                        let ch_1 = input_chars[i + 1];
-                        let ch_2 = input_chars[i + 2];
-                        if (ch_1 == 'n' || ch_1 == 'N') && (ch_2 == 'd' || ch_2 == 'D') {
-                            output_queue.push(ShuntingYardElem::Operator(Operator::And));
-                        }
-                        i += 2;
-                    } else if (ch == 'o' || ch == 'O') && i <= i_max - 1 {
-                        let ch_1 = input_chars[i + 1];
-                        if ch_1 == 'r' || ch_1 == 'R' {
-                            output_queue.push(ShuntingYardElem::Operator(Operator::Or));
-                        }
-                        i += 1;
-                    }
-                }
-                _ => statement.push(ch),
+            if statement.len() > 0 {
+                match Filter::parser(&statement) {
+                    Some(f) => output_queue.push(ShuntingYardElem::Filter(f)),
+                    None => panic!("statemen [{}] parse failed", statement),
+                };
+                statement.clear();
             }
-            i += 1;
         }
 
-        Filters {
-            output_queue,
-            operator_stack,
-        }
+        Filters { output_queue }
     }
     pub fn examples(show: bool) {
         let exs = vec![
@@ -890,10 +916,10 @@ impl Filters {
         ];
         if show {
             for e in exs {
-                info!(e);
+                info!("Example: {}", e);
             }
         } else {
-            // test it
+            // for unit test use
             for e in exs {
                 let filters = Filters::parser(e);
                 println!("{}", e); // for test
@@ -906,9 +932,38 @@ impl Filters {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pnet::packet::ethernet::MutableEthernetPacket;
+    use pnet::packet::ipv4::MutableIpv4Packet;
+    // use pnet::packet::tcp::MutableTcpPacket;
     #[test]
     fn test_filters_parser() {
         Filters::examples(false);
+    }
+    #[test]
+    fn test_filters() {
+        const ETHERNET_HEADER_SIZE: usize = 14;
+        const IPV4_HEADER_SIZE: usize = 20;
+        const TCP_HEADER_SIZE: usize = 20;
+        // const UDP_HEADER_SIZE: usize = 8;
+
+        let mut ethernet_buff = [0u8; ETHERNET_HEADER_SIZE + IPV4_HEADER_SIZE + TCP_HEADER_SIZE];
+        let mut ep = MutableEthernetPacket::new(&mut ethernet_buff).unwrap();
+        ep.set_destination(MacAddr::new(11, 12, 13, 14, 15, 16));
+        ep.set_source(MacAddr::new(21, 22, 23, 24, 25, 26));
+        ep.set_ethertype(EtherTypes::Ipv4);
+
+        let mut ip = MutableIpv4Packet::new(&mut ethernet_buff[ETHERNET_HEADER_SIZE..]).unwrap();
+        ip.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
+
+        // let mut tp =
+        //     MutableTcpPacket::new(&mut ethernet_buff[ETHERNET_HEADER_SIZE + IPV4_HEADER_SIZE..])
+        //         .unwrap();
+
+        let filter_str = "tcp";
+        let filtes = Filters::parser(filter_str);
+
+        let ret = filtes.calc(&ethernet_buff);
+        println!("{}", ret);
     }
     #[test]
     fn test_protocol() {
