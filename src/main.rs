@@ -1,9 +1,8 @@
 use clap::Parser;
-use pcap;
-use pcap::Active;
-use pcap::Capture;
-use pcap::Device;
-use pcap::IfFlags;
+use pcapture::Capture;
+use pcapture::Device;
+use pcapture::PcapByteOrder;
+use pnet::ipnetwork::IpNetwork;
 use std::fs;
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -15,15 +14,16 @@ use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
 
 mod filter;
+
 use filter::Filters;
 
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 static PACKETS_FILTERED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
-// The default is 1000000. This should always be larger than the snaplen.
-const DEFAULT_BUFFER_SIZE: i32 = 1000000;
+// The default is 65535. This should always be larger than the snaplen.
+const DEFAULT_BUFFER_SIZE: usize = 65535;
 // The default is 65535.
-const DEFAULT_SNAPLEN_SIZE: i32 = 65535;
+const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 
 /// Next generation tcpdump and udpdump.
 #[derive(Parser, Debug)]
@@ -47,11 +47,11 @@ struct Args {
 
     /// Set the buffer size for incoming packet data
     #[arg(long, default_value_t = DEFAULT_BUFFER_SIZE)]
-    buffer_size: i32,
+    buffer_size: usize,
 
     /// Set the snaplen size (the maximum length of a packet captured into the buffer), useful if you only want certain headers, but not the entire packet
     #[arg(long, default_value_t = DEFAULT_SNAPLEN_SIZE)]
-    snaplen_size: i32,
+    snaplen_size: usize,
 
     /// Set immediate mode on or off, by default, this is on for fast capture
     #[arg(long, action, default_value = "true")]
@@ -59,7 +59,7 @@ struct Args {
 
     /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
     #[arg(short, long, default_value_t = 0)]
-    timeout: i32,
+    timeout: u64,
 
     /// Set the filter when saving the packet, e.g. --filter ip=192.168.1.1 and port=80, please use --filter-examples to show more examples
     #[arg(short, long, default_value = "")]
@@ -145,7 +145,7 @@ fn file_size_parser(file_size: &str) -> u64 {
     }
 }
 
-fn local_capture(mut cap: Capture<Active>, args: &Args) {
+fn local_capture(mut cap: Capture, args: &Args) {
     let path = &args.path;
     let file_size = &args.file_size;
     let count = args.count;
@@ -295,28 +295,24 @@ fn local_capture(mut cap: Capture<Active>, args: &Args) {
 // fn remote_capture_server(mut cap: Capture<Active>, path: &str) {
 // }
 
-fn list_interface(devices: &[Device]) {
-    for (i, device) in devices.iter().enumerate() {
-        let mut msg = format!("{}.{}", i + 1, device.name);
-        match &device.desc {
-            Some(d) => msg += &format!(" ({})", d),
-            None => (),
-        }
-        let mut flag_msg_vec = Vec::new();
-        match device.flags.if_flags {
-            IfFlags::UP => flag_msg_vec.push("Up"),
-            IfFlags::RUNNING => flag_msg_vec.push("Running"),
-            IfFlags::LOOPBACK => flag_msg_vec.push("Loopback"),
-            IfFlags::WIRELESS => flag_msg_vec.push("Wireless"),
-            _ => (),
-        }
+fn list_interface() {
+    let devices = Device::list();
+    debug!("init devices list done");
 
-        if flag_msg_vec.len() > 0 {
-            let flag_msg = flag_msg_vec.join(", ");
-            msg += &format!("[{}]", flag_msg);
+    for (i, device) in devices.iter().enumerate() {
+        let mut msg = format!("{}.{} {:?}", i + 1, device.name, device.desc);
+        for ip in &device.ips {
+            match ip {
+                IpNetwork::V4(ipv4) => {
+                    msg += &format!(" {}", ipv4);
+                }
+                IpNetwork::V6(ipv6) => {
+                    msg += &format!(" {}", ipv6);
+                }
+            }
         }
+        msg += &format!(" {:?}", device.mac);
         info!("{}", msg);
-        debug!("{} - {:?}", i + 1, device);
     }
 }
 
@@ -347,14 +343,8 @@ fn main() {
     init_log_level(&args.log_level);
     debug!("init args done");
 
-    let devices = match Device::list() {
-        Ok(d) => d,
-        Err(e) => panic!("get the system device list failed: {}", e),
-    };
-    debug!("init devices list done");
-
     if args.list_interface {
-        list_interface(&devices);
+        list_interface();
         std::process::exit(0);
     }
 
@@ -363,40 +353,21 @@ fn main() {
         std::process::exit(0);
     }
 
+    let mut cap = match Capture::new_pcap(&args.interface, PcapByteOrder::WiresharkDefault) {
+        Ok(c) => c,
+        Err(e) => panic!("init the Capture failed: {}", e),
+    };
+    cap.promiscuous(args.promisc);
+    cap.buffer_size(args.buffer_size);
+    cap.snaplen(args.snaplen_size);
+    cap.timeout(args.timeout);
+
     info!("working...");
-    let mut capture_device = None;
-
-    for device in devices {
-        if device.name == args.interface {
-            debug!("found device [{}]", device.name);
-            capture_device = Some(device.clone());
-        }
-    }
-
-    match capture_device {
-        Some(device) => {
-            debug!("start capture");
-            match Capture::from_device(device) {
-                Ok(config_capture) => {
-                    let c = config_capture
-                        .promisc(args.promisc)
-                        .buffer_size(args.buffer_size)
-                        .snaplen(args.snaplen_size)
-                        .immediate_mode(args.immediate)
-                        .timeout(args.timeout);
-                    let cap = match c.open() {
-                        Ok(cap) => cap,
-                        Err(e) => panic!("can not open the capture: {}", e),
-                    };
-
-                    match args.mode.as_str() {
-                        "local" => local_capture(cap, &args),
-                        _ => panic!("unknown work mode [{}]", args.mode),
-                    }
-                }
-                Err(e) => panic!("get capture device failed: {}", e),
-            }
-        }
-        None => panic!("can not found interface [{}]", args.interface),
+    match cap.next() {
+        Ok(packet) => match args.mode.as_str() {
+            "local" => local_capture(cap, &args),
+            _ => panic!("unknown work mode [{}]", args.mode),
+        },
+        Err(e) => panic!("get capture device failed: {}", e),
     }
 }
