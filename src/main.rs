@@ -1,4 +1,5 @@
 use clap::Parser;
+use pcapture::pcapng::PcapNg;
 use pcapture::Capture;
 use pcapture::Device;
 use pcapture::PcapByteOrder;
@@ -51,7 +52,7 @@ struct Args {
 
     /// Set the snaplen size (the maximum length of a packet captured into the buffer), useful if you only want certain headers, but not the entire packet
     #[arg(long, default_value_t = DEFAULT_SNAPLEN_SIZE)]
-    snaplen_size: usize,
+    snaplen: usize,
 
     /// Set immediate mode on or off, by default, this is on for fast capture
     #[arg(long, action, default_value = "true")]
@@ -145,7 +146,7 @@ fn file_size_parser(file_size: &str) -> u64 {
     }
 }
 
-fn local_capture(mut cap: Capture, args: &Args) {
+fn work_local(mut cap: Capture, args: &Args) {
     let path = &args.path;
     let file_size = &args.file_size;
     let count = args.count;
@@ -167,127 +168,16 @@ fn local_capture(mut cap: Capture, args: &Args) {
             Err(_) => 0, // file not exists, ignore the error
         }
     };
-    let combine_filename = |ind: usize| -> String {
-        let filename = format!("{}.{}", ind, &path);
-        filename
-    };
-    let check_savefile_size = |ind: usize| -> usize {
-        let mut i = ind;
-        loop {
-            let target_file = combine_filename(i);
-            let savefile_size = get_savefile_size(&target_file);
-            debug!("target file [{}] size is [{}]", target_file, savefile_size);
-            if savefile_size > file_size_bytes {
-                i += 1;
-            } else {
-                return i;
-            }
-        }
-    };
     /* end closure */
 
-    /* count */
-    let finite_loop = if count > 0 { true } else { false };
-    let mut c = 0;
-
-    if finite_loop {
-        debug!("start finite loop [{}]", count);
-    } else {
-        debug!("start loop");
-    }
-
-    /* file_size */
-    let file_size_flag = if file_size.len() > 0 { true } else { false };
-    let mut file_suffix_ind = 0;
-    let mut sf = if file_size_flag {
-        let new_path = format!("{}.{}", file_suffix_ind, path);
-        debug!("file_size enabled, new save path [{}]", &new_path);
-        let sf = match cap.savefile(&new_path) {
-            Ok(sf) => sf,
-            Err(e) => panic!("set save file path [{}] failed: {}", new_path, e),
-        };
-        sf
-    } else {
-        // do nothing here
-        let sf = match cap.savefile(&path) {
-            Ok(sf) => sf,
-            Err(e) => panic!("set save file path [{}] failed: {}", path, e),
-        };
-        sf
-    };
-
-    // filter paramters
-    let filters = if args.filter.len() > 0 {
-        Some(Filters::parser(&args.filter))
-    } else {
-        None
-    };
-
+    let mut pcapng = PcapNg::new(iface);
     loop {
-        // count parameter
-        if finite_loop {
-            if c >= count {
-                break;
-            }
-            c += 1;
-        }
-
-        // file_size paramter
-        if file_size_flag {
-            let after_check_ind = check_savefile_size(file_suffix_ind);
-            // debug!("after check ind [{}]", after_check_ind);
-            let new_path = combine_filename(after_check_ind);
-            if after_check_ind > file_suffix_ind {
-                file_suffix_ind = after_check_ind;
-                let new_sf = match cap.savefile(&new_path) {
-                    Ok(sf) => sf,
-                    Err(e) => panic!("set save file path failed: {}", e),
-                };
-                debug!("change save file to [{}]", new_path);
-                sf = new_sf;
-            }
-        }
-
-        match cap.next_packet() {
-            Ok(packet) => {
-                debug!("received packet len: {}", packet.len());
-                match &filters {
-                    Some(f) => {
-                        if f.calc(&packet) {
-                            match PACKETS_CAPTURED.lock() {
-                                Ok(mut p) => *p += 1,
-                                Err(e) => error!("update the PACKETS_CAPTURED failed: {}", e),
-                            }
-                            sf.write(&packet);
-                        } else {
-                            match PACKETS_FILTERED.lock() {
-                                Ok(mut p) => *p += 1,
-                                Err(e) => error!("update the PACKETS_FILTERED failed: {}", e),
-                            }
-                        }
-                    }
-                    None => {
-                        match PACKETS_CAPTURED.lock() {
-                            Ok(mut p) => *p += 1,
-                            Err(e) => error!("update the PACKETS_CAPTURED failed: {}", e),
-                        }
-                        sf.write(&packet);
-                    }
-                }
-
-                // write packet to file immediately
-                match sf.flush() {
-                    Ok(_) => (),
-                    Err(e) => error!("flush error: {}", e),
-                }
-            }
-            Err(e) => {
-                if e != pcap::Error::TimeoutExpired {
-                    warn!("capture error: {}", e)
-                }
-            }
+        match cap.next() {
+            Ok(packet_data) => {}
+            Err(e) => error!("capture error: {}", e),
         }
     }
+
     // infinite loop cannot reach here
     quitting();
 }
@@ -359,13 +249,13 @@ fn main() {
     };
     cap.promiscuous(args.promisc);
     cap.buffer_size(args.buffer_size);
-    cap.snaplen(args.snaplen_size);
+    cap.snaplen(args.snaplen);
     cap.timeout(args.timeout);
 
     info!("working...");
     match cap.next() {
         Ok(packet) => match args.mode.as_str() {
-            "local" => local_capture(cap, &args),
+            "local" => work_local(cap, &args),
             _ => panic!("unknown work mode [{}]", args.mode),
         },
         Err(e) => panic!("get capture device failed: {}", e),
