@@ -1,25 +1,23 @@
+use chrono::Local;
 use clap::Parser;
-use pcapture::pcapng::PcapNg;
+use pcapture;
 use pcapture::Capture;
 use pcapture::Device;
 use pcapture::PcapByteOrder;
 use pnet::ipnetwork::IpNetwork;
 use std::fs;
+use std::fs::File;
 use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::time::Instant;
 use tracing::Level;
 use tracing::debug;
-use tracing::error;
 use tracing::info;
-use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
 
-mod filter;
-
-use filter::Filters;
+mod transport;
 
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
-static PACKETS_FILTERED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
 // The default is 65535. This should always be larger than the snaplen.
 const DEFAULT_BUFFER_SIZE: usize = 65535;
@@ -41,6 +39,10 @@ struct Args {
     /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
     #[arg(long, action, default_value = "")]
     file_size: String, // 1MB, 1KB, 1GB .etc
+
+    /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
+    #[arg(long, action, default_value = "")]
+    rotate: String, // 1S, 1M, 1D .etc
 
     /// Set promiscuous mode on or off
     #[arg(long, action, default_value = "true")]
@@ -79,7 +81,7 @@ struct Args {
     list_interface: bool,
 
     /// Set the save file path
-    #[arg(short, long, default_value = "xxpdump.pcap")]
+    #[arg(short, long, default_value = "xxpdump.pcapng")]
     path: String,
 
     /// Log display level
@@ -115,7 +117,7 @@ fn file_size_parser(file_size: &str) -> u64 {
             let unit = &file_size[ind..];
             let num: u64 = match num_str.parse() {
                 Ok(n) => n,
-                Err(_) => panic!("wrong file size parameter [{}]", file_size),
+                Err(_) => panic!("wrong file size parameter [{file_size}]"),
             };
             (num, unit)
         } else {
@@ -146,39 +148,178 @@ fn file_size_parser(file_size: &str) -> u64 {
     }
 }
 
-fn work_local(mut cap: Capture, args: &Args) {
-    let path = &args.path;
-    let file_size = &args.file_size;
-    let count = args.count;
+fn upadte_global_stat() {
+    let mut p = match PACKETS_CAPTURED.lock() {
+        Ok(p) => p,
+        Err(e) => panic!("update PACKETS_CAPTURED failed: {}", e),
+    };
+    *p += 1;
+}
 
-    let file_size_bytes = file_size_parser(file_size);
+fn capture_local_by_count(cap: &mut Capture, path: &str, count: usize) {
+    let mut pcapng = cap.gen_pcapng(PcapByteOrder::WiresharkDefault);
+    for _ in 0..count {
+        let block = cap
+            .next_with_pcapng()
+            .expect(&format!("capture local packet failed"));
+        pcapng.append(block);
+        upadte_global_stat();
+    }
+    pcapng
+        .write_all(path)
+        .expect(&format!("write pcapng to file [{}] failed", path));
+}
 
+fn get_file_size(target_file: &str) -> u64 {
+    match fs::metadata(target_file) {
+        Ok(m) => {
+            if m.is_file() {
+                m.len()
+            } else {
+                panic!("save file path [{}] is not file", target_file);
+            }
+        }
+        Err(_) => 0, // file not exists, ignore the error
+    }
+}
+
+fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64) {
+    let pbo = PcapByteOrder::WiresharkDefault;
+    let mut i = 0;
+
+    // write the first header to file
+    let mut new_path = format!("{}.{}", i, path);
+    let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
+    let mut pcapng = cap.gen_pcapng(pbo);
+    pcapng
+        .write(&mut fs)
+        .expect(&format!("write pcapng to {} failed", new_path));
+
+    loop {
+        let local_file_size = get_file_size(&new_path);
+        if local_file_size > file_size {
+            // change to new file
+            i += 1;
+            new_path = format!("{}.{}", i, path);
+            fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
+
+            pcapng
+                .write(&mut fs)
+                .expect(&format!("write pcapng to {} failed", new_path));
+        }
+
+        let mut block = cap.next_with_pcapng().expect("capture packet failed");
+        block
+            .write(&mut fs, pbo)
+            .expect(&format!("write block to file [{}] failed", new_path));
+        upadte_global_stat();
+    }
+}
+
+/// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
+fn rotate_parser(rotate: &str) -> u64 {
+    if rotate.len() > 0 {
+        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+        let mut ind = 0;
+        for ch in rotate.chars() {
+            if !nums_vec.contains(&ch) {
+                break;
+            }
+            ind += 1;
+        }
+
+        let (num, unit) = if ind > 0 && ind <= rotate.len() {
+            let num_str = &rotate[..ind];
+            let unit = &rotate[ind..];
+            let num: u64 = match num_str.parse() {
+                Ok(n) => n,
+                Err(_) => panic!("wrong file size parameter [{rotate}]"),
+            };
+            (num, unit)
+        } else {
+            panic!("wrong file size parameter [{}]", rotate);
+        };
+
+        let final_rotate = if unit.len() == 0 {
+            // no unit, by default, it bytes
+            num
+        } else {
+            let unit_fix = unit.trim();
+            if unit_fix.starts_with("S") || unit_fix.starts_with("s") {
+                num
+            } else if unit_fix.starts_with("M") || unit_fix.starts_with("m") {
+                num * 60
+            } else if unit_fix.starts_with("H") || unit_fix.starts_with("h") {
+                num * 60 * 60
+            } else if unit_fix.starts_with("D") || unit_fix.starts_with("d") {
+                num * 60 * 60 * 24
+            } else if unit_fix.starts_with("W") || unit_fix.starts_with("w") {
+                num * 60 * 60 * 24 * 7
+            } else {
+                panic!("wrong unit [{}]", unit);
+            }
+        };
+        debug!("finial rotate [{}] secs", final_rotate);
+        final_rotate
+    } else {
+        0
+    }
+}
+
+fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64) {
+    let mut start_time = Instant::now();
+
+    let pbo = PcapByteOrder::WiresharkDefault;
+    let now = Local::now();
+    let now_str = now.format("%Y-%m-%d %H:%M:%S");
+
+    // write the first header to file
+    let mut new_path = format!("{}.{}", now_str, path);
+    let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
+    let mut pcapng = cap.gen_pcapng(pbo);
+    pcapng
+        .write(&mut fs)
+        .expect(&format!("write pcapng to {} failed", new_path));
+
+    loop {
+        let duration = start_time.elapsed();
+        if duration.as_secs() >= rotate {
+            start_time = Instant::now();
+            let now = Local::now();
+            let now_str = now.format("%Y-%m-%d %H:%M:%S");
+            new_path = format!("{}.{}", now_str, path);
+            fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
+            pcapng
+                .write(&mut fs)
+                .expect(&format!("write pcapng to {} failed", new_path));
+        }
+
+        let mut block = cap.next_with_pcapng().expect("capture packet failed");
+        block
+            .write(&mut fs, pbo)
+            .expect(&format!("write block to file [{}] failed", new_path));
+        upadte_global_stat();
+    }
+}
+
+fn capture_local(cap: &mut Capture, args: &Args) {
     debug!("open save file path");
 
-    /* some closure here */
-    let get_savefile_size = |target_file: &str| -> u64 {
-        match fs::metadata(target_file) {
-            Ok(m) => {
-                if m.is_file() {
-                    m.len()
-                } else {
-                    panic!("save file path [{}] is not file", target_file);
-                }
-            }
-            Err(_) => 0, // file not exists, ignore the error
-        }
-    };
-    /* end closure */
+    let path = &args.path;
+    let count = args.count;
+    let file_size_str = &args.file_size;
+    let rotate_str = &args.rotate;
 
-    let mut pcapng = PcapNg::new(iface);
-    loop {
-        match cap.next() {
-            Ok(packet_data) => {}
-            Err(e) => error!("capture error: {}", e),
-        }
+    if count > 0 {
+        capture_local_by_count(cap, path, count);
+    } else if file_size_str.len() > 0 {
+        let file_size = file_size_parser(file_size_str);
+        capture_local_by_filesize(cap, path, file_size);
+    } else if rotate_str.len() > 0 {
+        let rotate = rotate_parser(rotate_str);
+        capture_local_by_rotate(cap, path, rotate);
     }
 
-    // infinite loop cannot reach here
     quitting();
 }
 
@@ -189,19 +330,32 @@ fn list_interface() {
     let devices = Device::list();
     debug!("init devices list done");
 
+    let mut info_vec = Vec::new();
     for (i, device) in devices.iter().enumerate() {
-        let mut msg = format!("{}.{} {:?}", i + 1, device.name, device.desc);
+        let mut tmp_vec = Vec::new();
+        tmp_vec.push(name);
+        match device.desc {
+            Some(desc) => tmp_vec.push(desc),
+            None => tmp_vec.push(String::from("NODESC")),
+        }
+        let mut msg = format!("{}. [{}-{:?}", i + 1, device.name, device.desc);
         for ip in &device.ips {
             match ip {
                 IpNetwork::V4(ipv4) => {
-                    msg += &format!(" {}", ipv4);
+                    msg += &format!("-{}", ipv4);
                 }
                 IpNetwork::V6(ipv6) => {
-                    msg += &format!(" {}", ipv6);
+                    msg += &format!("-{}", ipv6);
                 }
             }
         }
-        msg += &format!(" {:?}", device.mac);
+        match device.mac {
+            Some(mac) => {
+                msg += &format!("-{:?}", mac);
+            }
+            None => msg += "NOMAC",
+        }
+        msg += "]";
         info!("{}", msg);
     }
 }
@@ -212,15 +366,22 @@ fn quitting() {
         Ok(p) => *p,
         Err(e) => panic!("try to lock the PACKETS_CAPTURED failed: {}", e),
     };
-    let packets_filtered: usize = match PACKETS_FILTERED.lock() {
-        Ok(p) => *p,
-        Err(e) => panic!("try to lock the PACKETS_FILTERED failed: {}", e),
-    };
-    info!(
-        "packets captured [{}] | packets filtered [{}]",
-        packets_captured, packets_filtered
-    );
+    info!("packets captured [{}]", packets_captured);
     std::process::exit(0);
+}
+
+fn print_filter_examples() {
+    let examples = vec![
+        "tcp",
+        "tcp and port=80",
+        "icmp and ip=192.168.1.1",
+        "icmp and (ip=192.168.1.1 or ip=192.168.1.2)",
+    ];
+    for e in examples {
+        info!("{}", e);
+    }
+    let valid_procotol = pcapture::filter::show_valid_protocol();
+    info!("{:?}", valid_procotol);
 }
 
 fn main() {
@@ -239,25 +400,25 @@ fn main() {
     }
 
     if args.filter_examples {
-        Filters::examples(true);
+        print_filter_examples();
         std::process::exit(0);
     }
 
-    let mut cap = match Capture::new_pcap(&args.interface, PcapByteOrder::WiresharkDefault) {
+    let iface = &args.interface;
+    let mut cap = match Capture::new(&iface) {
         Ok(c) => c,
         Err(e) => panic!("init the Capture failed: {}", e),
     };
-    cap.promiscuous(args.promisc);
-    cap.buffer_size(args.buffer_size);
+    cap.promiscuous(args.promisc)
+        .expect("set promiscuous failed");
+    cap.buffer_size(args.buffer_size)
+        .expect("set buffer_size failed");
     cap.snaplen(args.snaplen);
-    cap.timeout(args.timeout);
+    cap.timeout(args.timeout).expect("set timeout failed");
 
     info!("working...");
-    match cap.next() {
-        Ok(packet) => match args.mode.as_str() {
-            "local" => work_local(cap, &args),
-            _ => panic!("unknown work mode [{}]", args.mode),
-        },
-        Err(e) => panic!("get capture device failed: {}", e),
+    match args.mode.as_str() {
+        "local" => capture_local(&mut cap, &args),
+        _ => panic!("unknown work mode [{}]", args.mode),
     }
 }
