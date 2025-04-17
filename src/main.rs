@@ -5,10 +5,15 @@ use pcapture::Capture;
 use pcapture::Device;
 use pcapture::PcapByteOrder;
 use pnet::ipnetwork::IpNetwork;
+use prettytable::Cell;
+use prettytable::Row;
+use prettytable::Table;
+use prettytable::row;
 use std::fs;
 use std::fs::File;
 use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::time::Duration;
 use std::time::Instant;
 use tracing::Level;
 use tracing::debug;
@@ -83,6 +88,10 @@ struct Args {
     /// Set the save file path
     #[arg(short, long, default_value = "xxpdump.pcapng")]
     path: String,
+
+    /// Used in conjunction with the -C option, this will limit the number of files created  to  the  specified number,  and  begin  overwriting files from the beginning
+    #[arg(long, default_value_t = 0)]
+    file_count: usize,
 
     /// Log display level
     #[arg(long, default_value = "info")]
@@ -183,7 +192,11 @@ fn get_file_size(target_file: &str) -> u64 {
     }
 }
 
-fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64) {
+fn get_next_i(i: usize, file_count: usize) -> usize {
+    if i < file_count - 1 { i + 1 } else { 0 }
+}
+
+fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file_count: usize) {
     let pbo = PcapByteOrder::WiresharkDefault;
     let mut i = 0;
 
@@ -198,8 +211,12 @@ fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64) {
     loop {
         let local_file_size = get_file_size(&new_path);
         if local_file_size > file_size {
-            // change to new file
-            i += 1;
+            // change write to new file
+            i = if file_count > 0 {
+                get_next_i(i, file_count)
+            } else {
+                i + 1
+            };
             new_path = format!("{}.{}", i, path);
             fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
 
@@ -266,8 +283,9 @@ fn rotate_parser(rotate: &str) -> u64 {
     }
 }
 
-fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64) {
+fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64, file_count: usize) {
     let mut start_time = Instant::now();
+    let mut write_files = 0;
 
     let pbo = PcapByteOrder::WiresharkDefault;
     let now = Local::now();
@@ -281,17 +299,19 @@ fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64) {
         .write(&mut fs)
         .expect(&format!("write pcapng to {} failed", new_path));
 
-    loop {
+    // work progress
+    let mut capture = |write_files: &mut usize| {
         let duration = start_time.elapsed();
         if duration.as_secs() >= rotate {
-            start_time = Instant::now();
+            start_time += Duration::from_secs(rotate);
             let now = Local::now();
-            let now_str = now.format("%Y-%m-%d %H:%M:%S");
+            let now_str = now.format("%Y_%m_%d_%H_%M_%S");
             new_path = format!("{}.{}", now_str, path);
             fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
             pcapng
                 .write(&mut fs)
                 .expect(&format!("write pcapng to {} failed", new_path));
+            *write_files += 1;
         }
 
         let mut block = cap.next_with_pcapng().expect("capture packet failed");
@@ -299,6 +319,22 @@ fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64) {
             .write(&mut fs, pbo)
             .expect(&format!("write block to file [{}] failed", new_path));
         upadte_global_stat();
+    };
+
+    if file_count > 0 {
+        // Used  in conjunction with the -G option,
+        // this will limit the number of rotated dump files that get created,
+        // exiting with status 0 when reaching the limit.
+        loop {
+            capture(&mut write_files);
+            if write_files > file_count {
+                break;
+            }
+        }
+    } else {
+        loop {
+            capture(&mut write_files);
+        }
     }
 }
 
@@ -308,16 +344,17 @@ fn capture_local(cap: &mut Capture, args: &Args) {
     let path = &args.path;
     let count = args.count;
     let file_size_str = &args.file_size;
+    let file_count = args.file_count;
     let rotate_str = &args.rotate;
 
     if count > 0 {
         capture_local_by_count(cap, path, count);
     } else if file_size_str.len() > 0 {
         let file_size = file_size_parser(file_size_str);
-        capture_local_by_filesize(cap, path, file_size);
+        capture_local_by_filesize(cap, path, file_size, file_count);
     } else if rotate_str.len() > 0 {
         let rotate = rotate_parser(rotate_str);
-        capture_local_by_rotate(cap, path, rotate);
+        capture_local_by_rotate(cap, path, rotate, file_count);
     }
 
     quitting();
@@ -331,33 +368,50 @@ fn list_interface() {
     debug!("init devices list done");
 
     let mut info_vec = Vec::new();
-    for (i, device) in devices.iter().enumerate() {
+    for device in devices {
         let mut tmp_vec = Vec::new();
-        tmp_vec.push(name);
-        match device.desc {
-            Some(desc) => tmp_vec.push(desc),
+        tmp_vec.push(device.name.clone());
+        match &device.desc {
+            Some(desc) => tmp_vec.push((*desc).clone()),
             None => tmp_vec.push(String::from("NODESC")),
         }
-        let mut msg = format!("{}. [{}-{:?}", i + 1, device.name, device.desc);
+        let mut ips = Vec::new();
         for ip in &device.ips {
             match ip {
                 IpNetwork::V4(ipv4) => {
-                    msg += &format!("-{}", ipv4);
+                    ips.push(ipv4.to_string());
                 }
                 IpNetwork::V6(ipv6) => {
-                    msg += &format!("-{}", ipv6);
+                    ips.push(ipv6.to_string());
                 }
             }
         }
         match device.mac {
             Some(mac) => {
-                msg += &format!("-{:?}", mac);
+                tmp_vec.push(mac.to_string());
             }
-            None => msg += "NOMAC",
+            None => tmp_vec.push(String::from("NOMAC")),
         }
-        msg += "]";
-        info!("{}", msg);
+        let info = vec![tmp_vec, ips];
+        info_vec.push(info);
     }
+
+    let mut table = Table::new();
+    table.add_row(row!["ID", "NAME", "DESC", "MAC", "IP"]);
+
+    for (ind, info) in info_vec.into_iter().enumerate() {
+        let mut cells = vec![Cell::new(&ind.to_string())];
+        let tmp_vec = &info[0];
+        let ips = &info[1];
+        for t in tmp_vec {
+            cells.push(Cell::new(&t));
+        }
+        let ips_str = ips.join("\n");
+        cells.push(Cell::new(&ips_str));
+        let row = Row::new(cells);
+        table.add_row(row);
+    }
+    table.printstd();
 }
 
 fn quitting() {
