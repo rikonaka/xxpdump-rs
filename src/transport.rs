@@ -13,6 +13,9 @@ use std::io::Read;
 use std::io::Write;
 use std::net::TcpListener;
 use std::net::TcpStream;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
+use strum_macros::EnumString;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum PcapType {
@@ -46,23 +49,38 @@ pub enum PcapNgType {
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PcapNgTransport {
     pub p_type: PcapNgType,
+    pub p_filename: String,
     pub p_data: Vec<u8>,
 }
 
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, EnumString, EnumIter,  Serialize, Deserialize, Encode, Decode)]
+pub enum WorkType {
+    Pcap = 0,
+    PcapNg = 1,
+}
+
+impl WorkType {
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+    pub fn from_u8(value: u8) -> Option<Self> {
+        WorkType::iter().find(|&e| e as u8 == value)
+    }
+}
+
+
 pub struct Client {
     stream: TcpStream,
-    is_pcapng: bool,
+    client_type: WorkType,
 }
 
 impl Client {
     /// Connecting to a remote backup server.
-    pub fn connect(url: &str, port: u16) -> Result<Client> {
+    pub fn connect(url: &str, port: u16, client_type: WorkType) -> Result<Client> {
         let addr = format!("{}:{}", url, port);
         let stream = TcpStream::connect(&addr)?;
-        Ok(Client {
-            stream,
-            is_pcapng: true,
-        })
+        Ok(Client { stream, client_type })
     }
     /// Client only send data not recv.
     pub fn send_pcap(&mut self, pcap_t: PcapTransport) -> Result<()> {
@@ -77,29 +95,23 @@ impl Client {
         self.stream.write_all(&encode_1)?;
         Ok(())
     }
-    /// Using pcap format.
-    pub fn use_pcap(&mut self) {
-        self.is_pcapng = false;
-    }
-    /// Using pcapng format (default).
-    pub fn use_pcapng(&mut self) {
-        self.is_pcapng = true;
-    }
 }
 
 pub struct Server {
     listener: TcpListener,
     fs: Option<File>,
     pbo: Option<PcapByteOrder>,
+    server_type: WorkType,
 }
 
 impl Server {
-    pub fn listen() -> Result<Server> {
-        let listener = TcpListener::bind("127.0.0.1:4000")?;
+    pub fn listen(addr: &str, server_type: WorkType) -> Result<Server> {
+        let listener = TcpListener::bind(addr)?;
         Ok(Server {
             listener,
             fs: None,
             pbo: None,
+            server_type,
         })
     }
     pub fn set_output_path(&mut self, path: &str) {
@@ -109,7 +121,7 @@ impl Server {
     pub fn set_pbo(&mut self, pbo: PcapByteOrder) {
         self.pbo = Some(pbo);
     }
-    pub fn recv_pcap(&mut self) -> Result<()> {
+    fn recv_pcap(&mut self) -> Result<()> {
         for stream in self.listener.incoming() {
             let mut stream = stream?;
             let mut reader = BufReader::new(&mut stream);
@@ -155,5 +167,16 @@ impl Server {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn server_presudo_code() {
+        let addr = "127.0.0.1:8888";
+        let server = Server::listen(addr).unwrap();
+        server.
     }
 }

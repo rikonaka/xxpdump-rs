@@ -1220,6 +1220,8 @@ dependencies = [
  "pnet",
  "prettytable",
  "serde",
+ "strum",
+ "strum_macros",
  "tracing",
  "tracing-subscriber",
 ]
