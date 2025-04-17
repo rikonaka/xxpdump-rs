@@ -234,7 +234,7 @@ fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file
 }
 
 /// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
-fn rotate_parser(rotate: &str) -> u64 {
+fn rotate_parser(rotate: &str) -> (u64, &str) {
     if rotate.len() > 0 {
         let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
         let mut ind = 0;
@@ -257,41 +257,50 @@ fn rotate_parser(rotate: &str) -> u64 {
             panic!("wrong file size parameter [{}]", rotate);
         };
 
-        let final_rotate = if unit.len() == 0 {
+        let (final_rotate, format_str) = if unit.len() == 0 {
             // no unit, by default, it bytes
-            num
+            (num, ROTATE_SEC_FORMAT)
         } else {
             let unit_fix = unit.trim();
             if unit_fix.starts_with("S") || unit_fix.starts_with("s") {
-                num
+                (num, ROTATE_SEC_FORMAT)
             } else if unit_fix.starts_with("M") || unit_fix.starts_with("m") {
-                num * 60
+                (num * 60, ROTATE_MIN_FORMAT)
             } else if unit_fix.starts_with("H") || unit_fix.starts_with("h") {
-                num * 60 * 60
+                (num * 60 * 60, ROTATE_HOUR_FORMAT)
             } else if unit_fix.starts_with("D") || unit_fix.starts_with("d") {
-                num * 60 * 60 * 24
+                (num * 60 * 60 * 24, ROTATE_DAY_FORMAT)
             } else if unit_fix.starts_with("W") || unit_fix.starts_with("w") {
-                num * 60 * 60 * 24 * 7
+                (num * 60 * 60 * 24 * 7, ROTATE_DAY_FORMAT)
             } else {
                 panic!("wrong unit [{}]", unit);
             }
         };
         debug!("finial rotate [{}] secs", final_rotate);
-        final_rotate
+        (final_rotate, format_str)
     } else {
-        0
+        (0, ROTATE_SEC_FORMAT)
     }
 }
 
-const ROTATE_TIME_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
+const ROTATE_SEC_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
+const ROTATE_MIN_FORMAT: &str = "%Y_%m_%d_%H_%M";
+const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
+const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
 
-fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64, file_count: usize) {
+fn capture_local_by_rotate(
+    cap: &mut Capture,
+    path: &str,
+    rotate: u64,
+    file_count: usize,
+    rotate_format: &str,
+) {
     let mut start_time = Instant::now();
     let mut write_files = 0;
 
     let pbo = PcapByteOrder::WiresharkDefault;
     let now = Local::now();
-    let now_str = now.format(ROTATE_TIME_FORMAT);
+    let now_str = now.format(rotate_format);
 
     // write the first header to file
     let mut new_path = format!("{}.{}", now_str, path);
@@ -307,7 +316,7 @@ fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64, file_coun
         if duration.as_secs() >= rotate {
             start_time += Duration::from_secs(rotate);
             let now = Local::now();
-            let now_str = now.format(ROTATE_TIME_FORMAT);
+            let now_str = now.format(rotate_format);
             new_path = format!("{}.{}", now_str, path);
             fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
             pcapng
@@ -355,8 +364,8 @@ fn capture_local(cap: &mut Capture, args: &Args) {
         let file_size = file_size_parser(file_size_str);
         capture_local_by_filesize(cap, path, file_size, file_count);
     } else if rotate_str.len() > 0 {
-        let rotate = rotate_parser(rotate_str);
-        capture_local_by_rotate(cap, path, rotate, file_count);
+        let (rotate, rotate_format) = rotate_parser(rotate_str);
+        capture_local_by_rotate(cap, path, rotate, file_count, rotate_format);
     }
 
     quitting();
