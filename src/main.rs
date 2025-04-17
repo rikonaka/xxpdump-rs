@@ -283,13 +283,15 @@ fn rotate_parser(rotate: &str) -> u64 {
     }
 }
 
+const ROTATE_TIME_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
+
 fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64, file_count: usize) {
     let mut start_time = Instant::now();
     let mut write_files = 0;
 
     let pbo = PcapByteOrder::WiresharkDefault;
     let now = Local::now();
-    let now_str = now.format("%Y-%m-%d %H:%M:%S");
+    let now_str = now.format(ROTATE_TIME_FORMAT);
 
     // write the first header to file
     let mut new_path = format!("{}.{}", now_str, path);
@@ -305,7 +307,7 @@ fn capture_local_by_rotate(cap: &mut Capture, path: &str, rotate: u64, file_coun
         if duration.as_secs() >= rotate {
             start_time += Duration::from_secs(rotate);
             let now = Local::now();
-            let now_str = now.format("%Y_%m_%d_%H_%M_%S");
+            let now_str = now.format(ROTATE_TIME_FORMAT);
             new_path = format!("{}.{}", now_str, path);
             fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
             pcapng
