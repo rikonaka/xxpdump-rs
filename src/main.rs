@@ -89,7 +89,7 @@ struct Args {
     #[arg(short, long, default_value = "xxpdump.pcapng")]
     path: String,
 
-    /// Used in conjunction with the -C option, this will limit the number of files created  to  the  specified number,  and  begin  overwriting files from the beginning
+    /// Used in conjunction with the -C option, this will limit the number of files created to the specified number, and begin overwriting files from the beginning
     #[arg(long, default_value_t = 0)]
     file_count: usize,
 
@@ -203,7 +203,7 @@ fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file
     // write the first header to file
     let mut new_path = format!("{}.{}", i, path);
     let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-    let mut pcapng = cap.gen_pcapng(pbo);
+    let pcapng = cap.gen_pcapng(pbo);
     pcapng
         .write(&mut fs)
         .expect(&format!("write pcapng to {} failed", new_path));
@@ -225,7 +225,7 @@ fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file
                 .expect(&format!("write pcapng to {} failed", new_path));
         }
 
-        let mut block = cap.next_with_pcapng().expect("capture packet failed");
+        let block = cap.next_with_pcapng().expect("capture packet failed");
         block
             .write(&mut fs, pbo)
             .expect(&format!("write block to file [{}] failed", new_path));
@@ -305,7 +305,7 @@ fn capture_local_by_rotate(
     // write the first header to file
     let mut new_path = format!("{}.{}", now_str, path);
     let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-    let mut pcapng = cap.gen_pcapng(pbo);
+    let pcapng = cap.gen_pcapng(pbo);
     pcapng
         .write(&mut fs)
         .expect(&format!("write pcapng to {} failed", new_path));
@@ -325,7 +325,7 @@ fn capture_local_by_rotate(
             *write_files += 1;
         }
 
-        let mut block = cap.next_with_pcapng().expect("capture packet failed");
+        let block = cap.next_with_pcapng().expect("capture packet failed");
         block
             .write(&mut fs, pbo)
             .expect(&format!("write block to file [{}] failed", new_path));

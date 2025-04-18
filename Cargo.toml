@@ -18,3 +18,4 @@ anyhow = "^1"
 prettytable = "^0"
 strum = "^0"
 strum_macros = "^0"
+tokio = { version = "^1", features = ["full"] }
