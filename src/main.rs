@@ -1,26 +1,25 @@
-use chrono::Local;
 use clap::Parser;
 use pcapture;
 use pcapture::Capture;
 use pcapture::Device;
-use pcapture::PcapByteOrder;
 use pnet::ipnetwork::IpNetwork;
 use prettytable::Cell;
 use prettytable::Row;
 use prettytable::Table;
 use prettytable::row;
 use std::fs;
-use std::fs::File;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::time::Duration;
-use std::time::Instant;
 use tracing::Level;
 use tracing::debug;
 use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
-mod transport;
+mod local;
+mod remote;
+
+use local::capture_local;
+use remote::capture_remote_server;
 
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
@@ -38,15 +37,15 @@ struct Args {
     interface: String,
 
     /// Exit after receiving 'count' packets
-    #[arg(long, action, default_value_t = 0)]
+    #[arg(long, default_value_t = 0)]
     count: usize,
 
     /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
-    #[arg(long, action, default_value = "")]
+    #[arg(long, default_value = "")]
     file_size: String, // 1MB, 1KB, 1GB .etc
 
     /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
-    #[arg(long, action, default_value = "")]
+    #[arg(long, default_value = "")]
     rotate: String, // 1S, 1M, 1D .etc
 
     /// Set promiscuous mode on or off
@@ -96,6 +95,18 @@ struct Args {
     /// Log display level
     #[arg(long, default_value = "info")]
     log_level: String,
+
+    /// Remote capture server listen addr
+    #[arg(long, default_value = "0.0.0.0:12345")]
+    server_addr: String,
+}
+
+fn upadte_global_stat() {
+    let mut p = match PACKETS_CAPTURED.lock() {
+        Ok(p) => p,
+        Err(e) => panic!("update PACKETS_CAPTURED failed: {}", e),
+    };
+    *p += 1;
 }
 
 fn init_log_level(log_level: &str) {
@@ -107,268 +118,6 @@ fn init_log_level(log_level: &str) {
 
     let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
     tracing::subscriber::set_global_default(subscriber).expect("failed to set subscriber");
-}
-
-/// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
-fn file_size_parser(file_size: &str) -> u64 {
-    if file_size.len() > 0 {
-        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-        let mut ind = 0;
-        for ch in file_size.chars() {
-            if !nums_vec.contains(&ch) {
-                break;
-            }
-            ind += 1;
-        }
-
-        let (num, unit) = if ind > 0 && ind <= file_size.len() {
-            let num_str = &file_size[..ind];
-            let unit = &file_size[ind..];
-            let num: u64 = match num_str.parse() {
-                Ok(n) => n,
-                Err(_) => panic!("wrong file size parameter [{file_size}]"),
-            };
-            (num, unit)
-        } else {
-            panic!("wrong file size parameter [{}]", file_size);
-        };
-
-        let final_file_size = if unit.len() == 0 {
-            // no unit, by default, it bytes
-            num
-        } else {
-            let unit_fix = unit.trim();
-            if unit_fix.starts_with("B") || unit_fix.starts_with("b") {
-                num
-            } else if unit_fix.starts_with("K") || unit_fix.starts_with("k") {
-                num * 1024
-            } else if unit_fix.starts_with("G") || unit_fix.starts_with("g") {
-                num * 1024 * 1024
-            } else if unit_fix.starts_with("P") || unit_fix.starts_with("p") {
-                num * 1024 * 1024 * 1024
-            } else {
-                panic!("wrong unit [{}]", unit);
-            }
-        };
-        debug!("finial file size [{}] bytes", final_file_size);
-        final_file_size
-    } else {
-        0
-    }
-}
-
-fn upadte_global_stat() {
-    let mut p = match PACKETS_CAPTURED.lock() {
-        Ok(p) => p,
-        Err(e) => panic!("update PACKETS_CAPTURED failed: {}", e),
-    };
-    *p += 1;
-}
-
-fn capture_local_by_count(cap: &mut Capture, path: &str, count: usize) {
-    let mut pcapng = cap.gen_pcapng(PcapByteOrder::WiresharkDefault);
-    for _ in 0..count {
-        let block = cap
-            .next_with_pcapng()
-            .expect(&format!("capture local packet failed"));
-        pcapng.append(block);
-        upadte_global_stat();
-    }
-    pcapng
-        .write_all(path)
-        .expect(&format!("write pcapng to file [{}] failed", path));
-}
-
-fn get_file_size(target_file: &str) -> u64 {
-    match fs::metadata(target_file) {
-        Ok(m) => {
-            if m.is_file() {
-                m.len()
-            } else {
-                panic!("save file path [{}] is not file", target_file);
-            }
-        }
-        Err(_) => 0, // file not exists, ignore the error
-    }
-}
-
-fn get_next_i(i: usize, file_count: usize) -> usize {
-    if i < file_count - 1 { i + 1 } else { 0 }
-}
-
-fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file_count: usize) {
-    let pbo = PcapByteOrder::WiresharkDefault;
-    let mut i = 0;
-
-    // write the first header to file
-    let mut new_path = format!("{}.{}", i, path);
-    let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-    let pcapng = cap.gen_pcapng(pbo);
-    pcapng
-        .write(&mut fs)
-        .expect(&format!("write pcapng to {} failed", new_path));
-
-    loop {
-        let local_file_size = get_file_size(&new_path);
-        if local_file_size > file_size {
-            // change write to new file
-            i = if file_count > 0 {
-                get_next_i(i, file_count)
-            } else {
-                i + 1
-            };
-            new_path = format!("{}.{}", i, path);
-            fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-
-            pcapng
-                .write(&mut fs)
-                .expect(&format!("write pcapng to {} failed", new_path));
-        }
-
-        let block = cap.next_with_pcapng().expect("capture packet failed");
-        block
-            .write(&mut fs, pbo)
-            .expect(&format!("write block to file [{}] failed", new_path));
-        upadte_global_stat();
-    }
-}
-
-/// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
-fn rotate_parser(rotate: &str) -> (u64, &str) {
-    if rotate.len() > 0 {
-        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-        let mut ind = 0;
-        for ch in rotate.chars() {
-            if !nums_vec.contains(&ch) {
-                break;
-            }
-            ind += 1;
-        }
-
-        let (num, unit) = if ind > 0 && ind <= rotate.len() {
-            let num_str = &rotate[..ind];
-            let unit = &rotate[ind..];
-            let num: u64 = match num_str.parse() {
-                Ok(n) => n,
-                Err(_) => panic!("wrong file size parameter [{rotate}]"),
-            };
-            (num, unit)
-        } else {
-            panic!("wrong file size parameter [{}]", rotate);
-        };
-
-        let (final_rotate, format_str) = if unit.len() == 0 {
-            // no unit, by default, it bytes
-            (num, ROTATE_SEC_FORMAT)
-        } else {
-            let unit_fix = unit.trim();
-            if unit_fix.starts_with("S") || unit_fix.starts_with("s") {
-                (num, ROTATE_SEC_FORMAT)
-            } else if unit_fix.starts_with("M") || unit_fix.starts_with("m") {
-                (num * 60, ROTATE_MIN_FORMAT)
-            } else if unit_fix.starts_with("H") || unit_fix.starts_with("h") {
-                (num * 60 * 60, ROTATE_HOUR_FORMAT)
-            } else if unit_fix.starts_with("D") || unit_fix.starts_with("d") {
-                (num * 60 * 60 * 24, ROTATE_DAY_FORMAT)
-            } else if unit_fix.starts_with("W") || unit_fix.starts_with("w") {
-                (num * 60 * 60 * 24 * 7, ROTATE_DAY_FORMAT)
-            } else {
-                panic!("wrong unit [{}]", unit);
-            }
-        };
-        debug!("finial rotate [{}] secs", final_rotate);
-        (final_rotate, format_str)
-    } else {
-        (0, ROTATE_SEC_FORMAT)
-    }
-}
-
-const ROTATE_SEC_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
-const ROTATE_MIN_FORMAT: &str = "%Y_%m_%d_%H_%M";
-const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
-const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
-
-fn capture_local_by_rotate(
-    cap: &mut Capture,
-    path: &str,
-    rotate: u64,
-    file_count: usize,
-    rotate_format: &str,
-) {
-    let mut start_time = Instant::now();
-    let mut write_files = 0;
-
-    let pbo = PcapByteOrder::WiresharkDefault;
-    let now = Local::now();
-    let now_str = now.format(rotate_format);
-
-    // write the first header to file
-    let mut new_path = format!("{}.{}", now_str, path);
-    let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-    let pcapng = cap.gen_pcapng(pbo);
-    pcapng
-        .write(&mut fs)
-        .expect(&format!("write pcapng to {} failed", new_path));
-
-    // work progress
-    let mut capture = |write_files: &mut usize| {
-        let duration = start_time.elapsed();
-        if duration.as_secs() >= rotate {
-            start_time += Duration::from_secs(rotate);
-            let now = Local::now();
-            let now_str = now.format(rotate_format);
-            new_path = format!("{}.{}", now_str, path);
-            fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-            pcapng
-                .write(&mut fs)
-                .expect(&format!("write pcapng to {} failed", new_path));
-            *write_files += 1;
-        }
-
-        let block = cap.next_with_pcapng().expect("capture packet failed");
-        block
-            .write(&mut fs, pbo)
-            .expect(&format!("write block to file [{}] failed", new_path));
-        upadte_global_stat();
-    };
-
-    if file_count > 0 {
-        // Used  in conjunction with the -G option,
-        // this will limit the number of rotated dump files that get created,
-        // exiting with status 0 when reaching the limit.
-        loop {
-            capture(&mut write_files);
-            if write_files > file_count {
-                break;
-            }
-        }
-    } else {
-        loop {
-            capture(&mut write_files);
-        }
-    }
-}
-
-fn capture_local(cap: &mut Capture, args: &Args) {
-    debug!("open save file path");
-
-    let path = &args.path;
-    let count = args.count;
-    let file_size_str = &args.file_size;
-    let file_count = args.file_count;
-    let rotate_str = &args.rotate;
-
-    if count > 0 {
-        capture_local_by_count(cap, path, count);
-    } else if file_size_str.len() > 0 {
-        let file_size = file_size_parser(file_size_str);
-        capture_local_by_filesize(cap, path, file_size, file_count);
-    } else if rotate_str.len() > 0 {
-        let (rotate, rotate_format) = rotate_parser(rotate_str);
-        capture_local_by_rotate(cap, path, rotate, file_count, rotate_format);
-    }
-
-    quitting();
 }
 
 // fn remote_capture_server(mut cap: Capture<Active>, path: &str) {
@@ -435,6 +184,122 @@ fn quitting() {
     std::process::exit(0);
 }
 
+/// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
+fn file_size_parser(file_size: &str) -> u64 {
+    if file_size.len() > 0 {
+        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+        let mut ind = 0;
+        for ch in file_size.chars() {
+            if !nums_vec.contains(&ch) {
+                break;
+            }
+            ind += 1;
+        }
+
+        let (num, unit) = if ind > 0 && ind <= file_size.len() {
+            let num_str = &file_size[..ind];
+            let unit = &file_size[ind..];
+            let num: u64 = match num_str.parse() {
+                Ok(n) => n,
+                Err(_) => panic!("wrong file size parameter [{file_size}]"),
+            };
+            (num, unit)
+        } else {
+            panic!("wrong file size parameter [{}]", file_size);
+        };
+
+        let final_file_size = if unit.len() == 0 {
+            // no unit, by default, it bytes
+            num
+        } else {
+            let unit_fix = unit.trim();
+            if unit_fix.starts_with("B") || unit_fix.starts_with("b") {
+                num
+            } else if unit_fix.starts_with("K") || unit_fix.starts_with("k") {
+                num * 1024
+            } else if unit_fix.starts_with("G") || unit_fix.starts_with("g") {
+                num * 1024 * 1024
+            } else if unit_fix.starts_with("P") || unit_fix.starts_with("p") {
+                num * 1024 * 1024 * 1024
+            } else {
+                panic!("wrong unit [{}]", unit);
+            }
+        };
+        debug!("finial file size [{}] bytes", final_file_size);
+        final_file_size
+    } else {
+        0
+    }
+}
+
+const ROTATE_SEC_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
+const ROTATE_MIN_FORMAT: &str = "%Y_%m_%d_%H_%M";
+const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
+const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
+
+/// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
+fn rotate_parser(rotate: &str) -> (u64, &str) {
+    if rotate.len() > 0 {
+        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+        let mut ind = 0;
+        for ch in rotate.chars() {
+            if !nums_vec.contains(&ch) {
+                break;
+            }
+            ind += 1;
+        }
+
+        let (num, unit) = if ind > 0 && ind <= rotate.len() {
+            let num_str = &rotate[..ind];
+            let unit = &rotate[ind..];
+            let num: u64 = match num_str.parse() {
+                Ok(n) => n,
+                Err(_) => panic!("wrong file size parameter [{rotate}]"),
+            };
+            (num, unit)
+        } else {
+            panic!("wrong file size parameter [{}]", rotate);
+        };
+
+        let (final_rotate, format_str) = if unit.len() == 0 {
+            // no unit, by default, it bytes
+            (num, ROTATE_SEC_FORMAT)
+        } else {
+            let unit_fix = unit.trim();
+            if unit_fix.starts_with("S") || unit_fix.starts_with("s") {
+                (num, ROTATE_SEC_FORMAT)
+            } else if unit_fix.starts_with("M") || unit_fix.starts_with("m") {
+                (num * 60, ROTATE_MIN_FORMAT)
+            } else if unit_fix.starts_with("H") || unit_fix.starts_with("h") {
+                (num * 60 * 60, ROTATE_HOUR_FORMAT)
+            } else if unit_fix.starts_with("D") || unit_fix.starts_with("d") {
+                (num * 60 * 60 * 24, ROTATE_DAY_FORMAT)
+            } else if unit_fix.starts_with("W") || unit_fix.starts_with("w") {
+                (num * 60 * 60 * 24 * 7, ROTATE_DAY_FORMAT)
+            } else {
+                panic!("wrong unit [{}]", unit);
+            }
+        };
+        debug!("finial rotate [{}] secs", final_rotate);
+        (final_rotate, format_str)
+    } else {
+        (0, ROTATE_SEC_FORMAT)
+    }
+}
+
+fn get_file_size(target_file: &str) -> u64 {
+    match fs::metadata(target_file) {
+        Ok(m) => {
+            if m.is_file() {
+                m.len()
+            } else {
+                panic!("save file path [{}] is not file", target_file);
+            }
+        }
+        Err(_) => 0, // file not exists, ignore the error
+    }
+}
+
 fn print_filter_examples() {
     let examples = vec![
         "tcp",
@@ -449,7 +314,8 @@ fn print_filter_examples() {
     info!("{:?}", valid_procotol);
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     ctrlc::set_handler(move || {
         quitting();
     })
@@ -484,6 +350,11 @@ fn main() {
     info!("working...");
     match args.mode.as_str() {
         "local" => capture_local(&mut cap, &args),
-        _ => panic!("unknown work mode [{}]", args.mode),
+        "server" => {
+            capture_remote_server(&args)
+                .await
+                .expect("capture remote server error");
+        }
+        _ => todo!(),
     }
 }
