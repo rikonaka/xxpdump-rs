@@ -12,7 +12,7 @@ use crate::file_size_parser;
 use crate::get_file_size;
 use crate::quitting;
 use crate::rotate_parser;
-use crate::upadte_global_stat;
+use crate::update_captured_stat;
 
 fn capture_local_by_count(cap: &mut Capture, path: &str, count: usize) {
     let mut pcapng = cap.gen_pcapng(PcapByteOrder::WiresharkDefault);
@@ -21,7 +21,7 @@ fn capture_local_by_count(cap: &mut Capture, path: &str, count: usize) {
             .next_with_pcapng()
             .expect(&format!("capture local packet failed"));
         pcapng.append(block);
-        upadte_global_stat();
+        update_captured_stat();
     }
     pcapng
         .write_all(path)
@@ -65,7 +65,7 @@ fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file
         block
             .write(&mut fs, pbo)
             .expect(&format!("write block to file [{}] failed", new_path));
-        upadte_global_stat();
+        update_captured_stat();
     }
 }
 
@@ -110,7 +110,7 @@ fn capture_local_by_rotate(
         block
             .write(&mut fs, pbo)
             .expect(&format!("write block to file [{}] failed", new_path));
-        upadte_global_stat();
+        update_captured_stat();
     };
 
     if file_count > 0 {
@@ -143,7 +143,7 @@ fn capture_local_by_none(cap: &mut Capture, path: &str) {
         block
             .write(&mut fs, pbo)
             .expect(&format!("write block to file [{}] failed", path));
-        upadte_global_stat();
+        update_captured_stat();
     }
 }
 
@@ -168,5 +168,5 @@ pub fn capture_local(cap: &mut Capture, args: &Args) {
         capture_local_by_none(cap, path);
     }
 
-    quitting();
+    quitting("local");
 }

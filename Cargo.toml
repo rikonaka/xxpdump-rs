@@ -9,6 +9,8 @@ pnet = { version = "^0", features = ["serde"] }
 pcapture = { path = "../pcapture-rs/", version = "^0" }
 serde = { version = "^1", features = ["derive"]}
 bincode = { version = "^2", features = ["serde"] }
+tokio = { version = "^1", features = ["full"] }
+uuid = { version = "^1", features = ["v4"] }
 pcap = "^2"
 tracing = "^0"
 tracing-subscriber = "^0"
@@ -16,6 +18,3 @@ ctrlc = "^3"
 chrono = "^0"
 anyhow = "^1"
 prettytable = "^0"
-strum = "^0"
-strum_macros = "^0"
-tokio = { version = "^1", features = ["full"] }

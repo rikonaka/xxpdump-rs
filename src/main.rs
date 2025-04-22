@@ -1,4 +1,8 @@
+use bincode::Decode;
+use bincode::Encode;
+use chrono::Local;
 use clap::Parser;
+use client::capture_remote_client;
 use pcapture;
 use pcapture::Capture;
 use pcapture::Device;
@@ -7,6 +11,8 @@ use prettytable::Cell;
 use prettytable::Row;
 use prettytable::Table;
 use prettytable::row;
+use serde::Deserialize;
+use serde::Serialize;
 use std::fs;
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -15,13 +21,15 @@ use tracing::debug;
 use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
+mod client;
 mod local;
-mod remote;
+mod server;
 
 use local::capture_local;
-use remote::capture_remote_server;
+use server::capture_remote_server;
 
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
+static PACKETS_SERVER_RECVED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
 // The default is 65535. This should always be larger than the snaplen.
 const DEFAULT_BUFFER_SIZE: usize = 65535;
@@ -101,10 +109,48 @@ struct Args {
     server_addr: String,
 }
 
-fn upadte_global_stat() {
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+enum PcapNgType {
+    InterfaceDescriptionBlock,
+    // PacketBlock,
+    SimplePacketBlock,
+    NameResolutionBlock,
+    InterfaceStatisticsBlock,
+    EnhancedPacketBlock,
+    SectionHeaderBlock,
+    // CustomBlock,
+    // CustomBlock2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+struct PcapNgTransport {
+    pub p_type: PcapNgType,
+    pub p_uuid: String,
+    pub p_data: Vec<u8>,
+}
+
+fn gen_file_name_simple(path: &str, uuid: &str) -> String {
+    let now = Local::now();
+    let now_str = now.format(ROTATE_SEC_FORMAT);
+    let uuid_split: Vec<&str> = uuid.split("-").collect();
+    let filename = format!("{}.{}.{}", now_str, uuid_split[0], path);
+    filename
+}
+
+/* SPLIT LINE */
+
+fn update_captured_stat() {
     let mut p = match PACKETS_CAPTURED.lock() {
         Ok(p) => p,
         Err(e) => panic!("update PACKETS_CAPTURED failed: {}", e),
+    };
+    *p += 1;
+}
+
+fn update_server_recved_stat() {
+    let mut p = match PACKETS_SERVER_RECVED.lock() {
+        Ok(p) => p,
+        Err(e) => panic!("update PACKETS_SERVER_RECVED failed: {}", e),
     };
     *p += 1;
 }
@@ -174,13 +220,26 @@ fn list_interface() {
     table.printstd();
 }
 
-fn quitting() {
+fn quitting(mode: &str) {
     info!("quitting...");
-    let packets_captured: usize = match PACKETS_CAPTURED.lock() {
-        Ok(p) => *p,
-        Err(e) => panic!("try to lock the PACKETS_CAPTURED failed: {}", e),
-    };
-    info!("packets captured [{}]", packets_captured);
+    match mode {
+        "local" | "client" => {
+            let packets_captured: usize = match PACKETS_CAPTURED.lock() {
+                Ok(p) => *p,
+                Err(e) => panic!("try to lock the PACKETS_CAPTURED failed: {}", e),
+            };
+            info!("packets captured [{}]", packets_captured);
+        }
+        "server" => {
+            let packets_server_recved: usize = match PACKETS_SERVER_RECVED.lock() {
+                Ok(p) => *p,
+                Err(e) => panic!("try to lock the PACKETS_SERVER_RECVED failed: {}", e),
+            };
+            info!("packets server recved [{}]", packets_server_recved);
+        }
+        _ => (),
+    }
+
     std::process::exit(0);
 }
 
@@ -316,12 +375,14 @@ fn print_filter_examples() {
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
+
+    let mode = args.mode.clone();
     ctrlc::set_handler(move || {
-        quitting();
+        quitting(&mode);
     })
     .expect("error setting Ctrl+C handler");
 
-    let args = Args::parse();
     init_log_level(&args.log_level);
     debug!("init args done");
 
@@ -335,26 +396,46 @@ async fn main() {
         std::process::exit(0);
     }
 
-    let iface = &args.interface;
-    let mut cap = match Capture::new(&iface) {
-        Ok(c) => c,
-        Err(e) => panic!("init the Capture failed: {}", e),
-    };
-    cap.promiscuous(args.promisc)
-        .expect("set promiscuous failed");
-    cap.buffer_size(args.buffer_size)
-        .expect("set buffer_size failed");
-    cap.snaplen(args.snaplen);
-    cap.timeout(args.timeout).expect("set timeout failed");
-
     info!("working...");
     match args.mode.as_str() {
-        "local" => capture_local(&mut cap, &args),
+        "local" => {
+            let iface = &args.interface;
+            let mut cap = match Capture::new(&iface) {
+                Ok(c) => c,
+                Err(e) => panic!("init the Capture failed: {}", e),
+            };
+            cap.promiscuous(args.promisc)
+                .expect("set promiscuous failed");
+            cap.buffer_size(args.buffer_size)
+                .expect("set buffer_size failed");
+            cap.snaplen(args.snaplen);
+            cap.timeout(args.timeout).expect("set timeout failed");
+            capture_local(&mut cap, &args);
+        }
+        "client" => {
+            let iface = &args.interface;
+            let mut cap = match Capture::new(&iface) {
+                Ok(c) => c,
+                Err(e) => panic!("init the Capture failed: {}", e),
+            };
+            cap.promiscuous(args.promisc)
+                .expect("set promiscuous failed");
+            cap.buffer_size(args.buffer_size)
+                .expect("set buffer_size failed");
+            cap.snaplen(args.snaplen);
+            cap.timeout(args.timeout).expect("set timeout failed");
+            capture_remote_client(&mut cap, &args)
+                .await
+                .expect("capture remote client error");
+        }
         "server" => {
             capture_remote_server(&args)
                 .await
                 .expect("capture remote server error");
         }
-        _ => todo!(),
+        _ => panic!("unsupported mode"),
     }
 }
+
+#[cfg(test)]
+mod test {}
