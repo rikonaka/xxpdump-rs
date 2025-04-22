@@ -380,13 +380,26 @@ impl Server {
     ) -> Result<()> {
         let config = bincode::config::standard();
         let mut writer = SplitWriter::new(split, path)?;
+        let mut uuid = String::new();
         loop {
             let mut len_buf = [0u8; 4];
-            socket.read_exact(&mut len_buf).await?;
+            match socket.read_exact(&mut len_buf).await {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("read len failed [{}]: {}", &uuid, e);
+                    return Ok(());
+                }
+            };
             let recv_len = u32::from_be_bytes(len_buf) as usize;
 
             let mut buf = vec![0u8; recv_len];
-            socket.read_exact(&mut buf).await?;
+            match socket.read_exact(&mut buf).await {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("read data failed [{}]: {}", &uuid, e);
+                    return Ok(());
+                }
+            };
 
             let decode: (PcapNgTransport, usize) = bincode::decode_from_slice(&buf, config)?;
             let (pcapng_t, decode_len) = decode;
@@ -395,6 +408,7 @@ impl Server {
                 writer.update_uuid(&pcapng_t.p_uuid)?;
                 writer.pcapng_write(&pcapng_t, pbo, config)?;
                 update_server_recved_stat();
+                uuid = pcapng_t.p_uuid;
             } else {
                 warn!("decode_len[{}] != recv_len[{}]", decode_len, recv_len);
             }
@@ -411,7 +425,7 @@ impl Server {
             tokio::spawn(async move {
                 match Self::recv_pcapng(&mut socket, &path, pbo, split).await {
                     Ok(_) => (),
-                    Err(e) => error!("recv pcapng failed: {}", e), // ignore the error and keep running
+                    Err(e) => error!("recv pcapng from failed: {}", e), // ignore the error and keep running
                 }
             });
         }

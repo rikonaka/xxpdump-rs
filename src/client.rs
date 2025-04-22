@@ -46,29 +46,34 @@ impl Client {
     async fn send_block(
         &mut self,
         block: GeneralBlock,
-        pbo: PcapByteOrder,
         p_uuid: &str,
         config: Configuration,
     ) -> Result<()> {
         let (p_type, p_data) = match block {
-            GeneralBlock::SectionHeaderBlock(shb) => {
-                (PcapNgType::SectionHeaderBlock, shb.to_vec(pbo)?)
-            }
-            GeneralBlock::InterfaceDescriptionBlock(idb) => {
-                (PcapNgType::InterfaceDescriptionBlock, idb.to_vec(pbo)?)
-            }
-            GeneralBlock::EnhancedPacketBlock(epb) => {
-                (PcapNgType::EnhancedPacketBlock, epb.to_vec(pbo)?)
-            }
-            GeneralBlock::SimplePacketBlock(spb) => {
-                (PcapNgType::SimplePacketBlock, spb.to_vec(pbo)?)
-            }
-            GeneralBlock::InterfaceStatisticsBlock(isb) => {
-                (PcapNgType::InterfaceStatisticsBlock, isb.to_vec(pbo)?)
-            }
-            GeneralBlock::NameResolutionBlock(nrb) => {
-                (PcapNgType::NameResolutionBlock, nrb.to_vec(pbo)?)
-            }
+            GeneralBlock::SectionHeaderBlock(shb) => (
+                PcapNgType::SectionHeaderBlock,
+                bincode::encode_to_vec(shb, config)?,
+            ),
+            GeneralBlock::InterfaceDescriptionBlock(idb) => (
+                PcapNgType::InterfaceDescriptionBlock,
+                bincode::encode_to_vec(idb, config)?,
+            ),
+            GeneralBlock::EnhancedPacketBlock(epb) => (
+                PcapNgType::EnhancedPacketBlock,
+                bincode::encode_to_vec(epb, config)?,
+            ),
+            GeneralBlock::SimplePacketBlock(spb) => (
+                PcapNgType::SimplePacketBlock,
+                bincode::encode_to_vec(spb, config)?,
+            ),
+            GeneralBlock::InterfaceStatisticsBlock(isb) => (
+                PcapNgType::InterfaceStatisticsBlock,
+                bincode::encode_to_vec(isb, config)?,
+            ),
+            GeneralBlock::NameResolutionBlock(nrb) => (
+                PcapNgType::NameResolutionBlock,
+                bincode::encode_to_vec(nrb, config)?,
+            ),
         };
         let pcapng_t = PcapNgTransport {
             p_type,
@@ -107,13 +112,13 @@ pub async fn capture_remote_client(cap: &mut Capture, args: &Args) -> Result<()>
     let pcapng = cap.gen_pcapng(pbo);
     for block in pcapng.blocks {
         // shb and idb
-        client.send_block(block, pbo, &p_uuid, config).await?;
+        client.send_block(block, &p_uuid, config).await?;
         update_captured_stat();
     }
 
     loop {
         let block = cap.next_with_pcapng().expect("capture packet failed");
-        client.send_block(block, pbo, &p_uuid, config).await?;
+        client.send_block(block, &p_uuid, config).await?;
         update_captured_stat();
     }
 }
