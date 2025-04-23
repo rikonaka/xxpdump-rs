@@ -85,8 +85,10 @@ impl Client {
     }
 }
 
+const CLIENT_UUID_PATH: &str = ".client_uuid";
+
 fn find_uuid() -> Result<String> {
-    let client_uuid_path = Path::new(".client_uuid");
+    let client_uuid_path = Path::new(CLIENT_UUID_PATH);
     let uuid = if client_uuid_path.exists() {
         let mut client_uuid_fs = File::open(client_uuid_path)?;
         let mut uuid_str = String::new();
@@ -117,7 +119,7 @@ pub async fn capture_remote_client(cap: &mut Capture, args: &Args) -> Result<()>
     }
 
     loop {
-        let block = cap.next_with_pcapng().expect("capture packet failed");
+        let block = cap.next_with_pcapng().expect("client capture packet failed");
         client.send_block(block, &p_uuid, config).await?;
         update_captured_stat();
     }

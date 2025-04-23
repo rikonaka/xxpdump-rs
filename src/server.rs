@@ -23,6 +23,7 @@ use tracing::info;
 use tracing::warn;
 
 use crate::Args;
+use crate::PACKETS_SERVER_RECVED;
 use crate::PcapNgTransport;
 use crate::PcapNgType;
 use crate::file_size_parser;
@@ -381,12 +382,25 @@ impl Server {
         let config = bincode::config::standard();
         let mut writer = SplitWriter::new(split, path)?;
         let mut uuid = String::new();
+
+        let get_server_recved = || -> usize {
+            let packets_server_recved: usize = match PACKETS_SERVER_RECVED.lock() {
+                Ok(p) => *p,
+                Err(e) => panic!("try to lock the PACKETS_SERVER_RECVED failed: {}", e),
+            };
+            packets_server_recved
+        };
+
         loop {
             let mut len_buf = [0u8; 4];
             match socket.read_exact(&mut len_buf).await {
                 Ok(_) => (),
                 Err(e) => {
-                    error!("read len failed [{}]: {}", &uuid, e);
+                    let recved = get_server_recved();
+                    error!(
+                        " total recved [{}], read step1 data len failed [{}]: {}",
+                        recved, &uuid, e
+                    );
                     return Ok(());
                 }
             };
@@ -396,7 +410,11 @@ impl Server {
             match socket.read_exact(&mut buf).await {
                 Ok(_) => (),
                 Err(e) => {
-                    error!("read data failed [{}]: {}", &uuid, e);
+                    let recved = get_server_recved();
+                    error!(
+                        " total recved [{}], read step2 data failed [{}]: {}",
+                        recved, &uuid, e
+                    );
                     return Ok(());
                 }
             };
@@ -405,7 +423,9 @@ impl Server {
             let (pcapng_t, decode_len) = decode;
             if decode_len == recv_len {
                 // it should equal
-                writer.update_uuid(&pcapng_t.p_uuid)?;
+                if writer.client_uuid.len() == 0 {
+                    writer.update_uuid(&pcapng_t.p_uuid)?;
+                }
                 writer.pcapng_write(&pcapng_t, pbo, config)?;
                 update_server_recved_stat();
                 uuid = pcapng_t.p_uuid;
@@ -418,7 +438,7 @@ impl Server {
         loop {
             let (mut socket, _) = self.listener.accept().await?;
             let path = self.user_input_path.to_string();
-            let pbo = self.pbo.clone();
+            let pbo = self.pbo;
             let split = self.split_rule.clone();
 
             // the default format is pcapng
@@ -444,11 +464,17 @@ pub async fn capture_remote_server(args: &Args) -> Result<()> {
 
 #[cfg(test)]
 mod test {
+    use std::fs::File;
+
     use uuid::Uuid;
     #[test]
     fn uuid_gen() {
         let uuid = Uuid::new_v4();
         // aa3293ec-5cec-4984-aa19-56d462bdc0eb
         println!("{}", uuid);
+    }
+    #[test]
+    fn empty_file() {
+        let _ = File::create("test.bin").unwrap();
     }
 }

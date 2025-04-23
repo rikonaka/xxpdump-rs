@@ -438,4 +438,16 @@ async fn main() {
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use super::*;
+    #[tokio::test]
+    async fn server_run() {
+        let itr = vec!["", "--mode", "server", "--rotate", "20s"];
+        let args = Args::parse_from(itr);
+        println!("{}", args.mode);
+        println!("{}", args.rotate);
+        capture_remote_server(&args)
+            .await
+            .expect("capture remote server error");
+    }
+}
