@@ -190,6 +190,43 @@ impl SplitRule {
     }
 }
 
+static ERROR_CLIENT: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// true => error, just ignore it
+fn is_client_error(uuid: &str) -> bool {
+    let c = match ERROR_CLIENT.lock() {
+        Ok(c) => c,
+        Err(e) => panic!("unable to lock ERROR_CLIENT: {}", e),
+    };
+
+    let uuid = uuid.to_string();
+    if (*c).contains(&uuid) { true } else { false }
+}
+
+fn add_client_to_error(uuid: &str) {
+    let mut c = match ERROR_CLIENT.lock() {
+        Ok(c) => c,
+        Err(e) => panic!("unable to lock ERROR_CLIENT: {}", e),
+    };
+
+    let uuid = uuid.to_string();
+    if !(*c).contains(&uuid) {
+        (*c).push(uuid)
+    }
+}
+
+fn remove_client_from_error(uuid: &str) {
+    let mut c = match ERROR_CLIENT.lock() {
+        Ok(c) => c,
+        Err(e) => panic!("unable to lock ERROR_CLIENT: {}", e),
+    };
+
+    let uuid = uuid.to_string();
+    if (*c).contains(&uuid) {
+        (*c).retain(|x| *x == uuid);
+    }
+}
+
 #[derive(Debug)]
 struct SplitWriter {
     split_rule: SplitRule,
@@ -276,11 +313,19 @@ impl SplitWriter {
 
                     let shb = match get_header_shb(&self.client_uuid) {
                         Some(shb) => shb,
-                        None => panic!("shb can not be found"),
+                        None => {
+                            error!("shb can not be found");
+                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            return Ok(());
+                        }
                     };
                     let idb = match get_header_idb(&self.client_uuid) {
                         Some(idb) => idb,
-                        None => panic!("idb can not be found"),
+                        None => {
+                            error!("idb can not be found");
+                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            return Ok(());
+                        }
                     };
                     shb.write(&mut fs, pbo)?;
                     idb.write(&mut fs, pbo)?;
@@ -300,11 +345,19 @@ impl SplitWriter {
 
                     let shb = match get_header_shb(&self.client_uuid) {
                         Some(shb) => shb,
-                        None => panic!("shb can not be found"),
+                        None => {
+                            error!("shb can not be found");
+                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            return Ok(());
+                        }
                     };
                     let idb = match get_header_idb(&self.client_uuid) {
                         Some(idb) => idb,
-                        None => panic!("idb can not be found"),
+                        None => {
+                            error!("idb can not be found");
+                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            return Ok(());
+                        }
                     };
                     shb.write(&mut fs, pbo)?;
                     idb.write(&mut fs, pbo)?;
@@ -324,11 +377,19 @@ impl SplitWriter {
 
                     let shb = match get_header_shb(&self.client_uuid) {
                         Some(shb) => shb,
-                        None => panic!("shb can not be found"),
+                        None => {
+                            error!("shb can not be found");
+                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            return Ok(());
+                        }
                     };
                     let idb = match get_header_idb(&self.client_uuid) {
                         Some(idb) => idb,
-                        None => panic!("idb can not be found"),
+                        None => {
+                            error!("idb can not be found");
+                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            return Ok(());
+                        }
                     };
                     shb.write(&mut fs, pbo)?;
                     idb.write(&mut fs, pbo)?;
@@ -421,7 +482,7 @@ impl Server {
 
             let decode: (PcapNgTransport, usize) = bincode::decode_from_slice(&buf, config)?;
             let (pcapng_t, decode_len) = decode;
-            if decode_len == recv_len {
+            if decode_len == recv_len && !is_client_error(&pcapng_t.p_uuid) {
                 // it should equal
                 if writer.client_uuid.len() == 0 {
                     writer.update_uuid(&pcapng_t.p_uuid)?;
