@@ -84,6 +84,10 @@ struct Args {
     #[arg(long, action, default_value = "false")]
     filter_examples: bool,
 
+    /// Show the filter valid protocol
+    #[arg(long, action, default_value = "false")]
+    filter_valid_protocol: bool,
+
     /// Set the program work mode, by default, this is 'local' mode and save traffic file in local storege
     #[arg(short, long, default_value = "local")]
     mode: String,
@@ -381,6 +385,11 @@ fn print_filter_examples() {
     // info!("{:?}", valid_procotol);
 }
 
+fn print_valid_procotol() {
+    let valid_procotol = pcapture::filter::show_valid_protocol();
+    info!("{:?}", valid_procotol);
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -401,6 +410,11 @@ async fn main() {
 
     if args.filter_examples {
         print_filter_examples();
+        std::process::exit(0);
+    }
+
+    if args.filter_valid_protocol {
+        print_valid_procotol();
         std::process::exit(0);
     }
 
