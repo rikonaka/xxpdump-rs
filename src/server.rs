@@ -15,6 +15,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tracing::debug;
@@ -51,6 +52,7 @@ fn get_header_shb(uuid: &str) -> Option<SectionHeaderBlock> {
         Ok(p) => p,
         Err(e) => panic!("lock HEADERS_SHB failed: {}", e),
     };
+    debug!("{:?}", p);
     match p.get(uuid) {
         Some(shb) => Some(shb.clone()),
         None => None,
@@ -70,6 +72,7 @@ fn get_header_idb(uuid: &str) -> Option<InterfaceDescriptionBlock> {
         Ok(p) => p,
         Err(e) => panic!("lock HEADERS_IDB failed: {}", e),
     };
+    debug!("{:?}", p);
     match p.get(uuid) {
         Some(idb) => Some(idb.clone()),
         None => None,
@@ -190,43 +193,6 @@ impl SplitRule {
     }
 }
 
-static ERROR_CLIENT: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-
-/// true => error, just ignore it
-fn is_client_error(uuid: &str) -> bool {
-    let c = match ERROR_CLIENT.lock() {
-        Ok(c) => c,
-        Err(e) => panic!("unable to lock ERROR_CLIENT: {}", e),
-    };
-
-    let uuid = uuid.to_string();
-    if (*c).contains(&uuid) { true } else { false }
-}
-
-fn add_client_to_error(uuid: &str) {
-    let mut c = match ERROR_CLIENT.lock() {
-        Ok(c) => c,
-        Err(e) => panic!("unable to lock ERROR_CLIENT: {}", e),
-    };
-
-    let uuid = uuid.to_string();
-    if !(*c).contains(&uuid) {
-        (*c).push(uuid)
-    }
-}
-
-fn remove_client_from_error(uuid: &str) {
-    let mut c = match ERROR_CLIENT.lock() {
-        Ok(c) => c,
-        Err(e) => panic!("unable to lock ERROR_CLIENT: {}", e),
-    };
-
-    let uuid = uuid.to_string();
-    if (*c).contains(&uuid) {
-        (*c).retain(|x| *x == uuid);
-    }
-}
-
 #[derive(Debug)]
 struct SplitWriter {
     split_rule: SplitRule,
@@ -303,6 +269,16 @@ impl SplitWriter {
             Ok(())
         };
 
+        // lazy, init once and use it below
+        let shb_not_found_error_msg = format!(
+            "shb can not be found, you will not be able to open the client [{}] traffic correctly, it is recommended to restart the client",
+            self.client_uuid
+        );
+        let idb_not_found_error_msg = format!(
+            "idb can not be found, you will not be able to open the client [{}] traffic correctly, it is recommended to restart the client",
+            self.client_uuid
+        );
+
         match &mut self.split_rule {
             SplitRule::Count(sc) => {
                 sc.current_packet_num += 1;
@@ -314,16 +290,14 @@ impl SplitWriter {
                     let shb = match get_header_shb(&self.client_uuid) {
                         Some(shb) => shb,
                         None => {
-                            error!("shb can not be found");
-                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            error!(shb_not_found_error_msg);
                             return Ok(());
                         }
                     };
                     let idb = match get_header_idb(&self.client_uuid) {
                         Some(idb) => idb,
                         None => {
-                            error!("idb can not be found");
-                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            error!(idb_not_found_error_msg);
                             return Ok(());
                         }
                     };
@@ -346,16 +320,14 @@ impl SplitWriter {
                     let shb = match get_header_shb(&self.client_uuid) {
                         Some(shb) => shb,
                         None => {
-                            error!("shb can not be found");
-                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            error!(shb_not_found_error_msg);
                             return Ok(());
                         }
                     };
                     let idb = match get_header_idb(&self.client_uuid) {
                         Some(idb) => idb,
                         None => {
-                            error!("idb can not be found");
-                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            error!(idb_not_found_error_msg);
                             return Ok(());
                         }
                     };
@@ -378,16 +350,14 @@ impl SplitWriter {
                     let shb = match get_header_shb(&self.client_uuid) {
                         Some(shb) => shb,
                         None => {
-                            error!("shb can not be found");
-                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            error!(shb_not_found_error_msg);
                             return Ok(());
                         }
                     };
                     let idb = match get_header_idb(&self.client_uuid) {
                         Some(idb) => idb,
                         None => {
-                            error!("idb can not be found");
-                            add_client_to_error(&self.client_uuid); // tag this client be error
+                            error!(idb_not_found_error_msg);
                             return Ok(());
                         }
                     };
@@ -417,6 +387,7 @@ struct Server {
     pbo: PcapByteOrder,
     user_input_path: String,
     split_rule: SplitRule,
+    server_passwd: String,
 }
 
 impl Server {
@@ -425,6 +396,7 @@ impl Server {
         pbo: PcapByteOrder,
         user_input_path: &str,
         split_rule: SplitRule,
+        server_passwd: &str,
     ) -> Result<Server> {
         let listener = TcpListener::bind(addr).await?;
         Ok(Server {
@@ -432,6 +404,7 @@ impl Server {
             pbo,
             user_input_path: user_input_path.to_string(),
             split_rule,
+            server_passwd: server_passwd.to_string(),
         })
     }
     async fn recv_pcapng(
@@ -453,9 +426,8 @@ impl Server {
         };
 
         loop {
-            let mut len_buf = [0u8; 4];
-            match socket.read_exact(&mut len_buf).await {
-                Ok(_) => (),
+            let recv_len = match socket.read_u32().await {
+                Ok(l) => l,
                 Err(e) => {
                     let recved = get_server_recved();
                     error!(
@@ -465,9 +437,8 @@ impl Server {
                     return Ok(());
                 }
             };
-            let recv_len = u32::from_be_bytes(len_buf) as usize;
 
-            let mut buf = vec![0u8; recv_len];
+            let mut buf = vec![0u8; recv_len as usize];
             match socket.read_exact(&mut buf).await {
                 Ok(_) => (),
                 Err(e) => {
@@ -482,7 +453,7 @@ impl Server {
 
             let decode: (PcapNgTransport, usize) = bincode::decode_from_slice(&buf, config)?;
             let (pcapng_t, decode_len) = decode;
-            if decode_len == recv_len && !is_client_error(&pcapng_t.p_uuid) {
+            if decode_len == recv_len as usize {
                 // it should equal
                 if writer.client_uuid.len() == 0 {
                     writer.update_uuid(&pcapng_t.p_uuid)?;
@@ -498,17 +469,42 @@ impl Server {
     async fn recv_block_loop(&mut self) -> Result<()> {
         loop {
             let (mut socket, _) = self.listener.accept().await?;
-            let path = self.user_input_path.to_string();
-            let pbo = self.pbo;
-            let split = self.split_rule.clone();
 
-            // the default format is pcapng
-            tokio::spawn(async move {
-                match Self::recv_pcapng(&mut socket, &path, pbo, split).await {
-                    Ok(_) => (),
-                    Err(e) => error!("recv pcapng from failed: {}", e), // ignore the error and keep running
-                }
-            });
+            if self.auth(&mut socket).await? {
+                let path = self.user_input_path.to_string();
+                let pbo = self.pbo;
+                let split = self.split_rule.clone();
+
+                // the default format is pcapng
+                tokio::spawn(async move {
+                    match Self::recv_pcapng(&mut socket, &path, pbo, split).await {
+                        Ok(_) => (),
+                        Err(e) => error!("recv pcapng from failed: {}", e), // ignore the error and keep running
+                    }
+                });
+            }
+        }
+    }
+    /// very simple server auth.
+    async fn auth(&self, socket: &mut TcpStream) -> Result<bool> {
+        let recv_len = socket.read_u32().await?;
+
+        let mut buf = vec![0u8; recv_len as usize];
+        let _ = socket.read_exact(&mut buf).await?;
+
+        let cliend_send_passwd = String::from_utf8_lossy(&buf).to_string();
+        if cliend_send_passwd == self.server_passwd {
+            let auth_success_ret = "ok";
+            let auth_success_ret_vec = auth_success_ret.as_bytes();
+            socket.write_u32(auth_success_ret_vec.len() as u32).await?;
+            socket.write_all(auth_success_ret_vec).await?;
+            Ok(true)
+        } else {
+            let auth_failed_ret = "failed";
+            let auth_failed_ret_vec = auth_failed_ret.as_bytes();
+            socket.write_u32(auth_failed_ret_vec.len() as u32).await?;
+            socket.write_all(auth_failed_ret_vec).await?;
+            Ok(false)
         }
     }
 }
@@ -518,7 +514,14 @@ pub async fn capture_remote_server(args: &Args) -> Result<()> {
     let pbo = PcapByteOrder::WiresharkDefault; // default
     let split_rule = SplitRule::init(args);
 
-    let mut server = Server::init(&args.server_addr, pbo, &args.path, split_rule).await?;
+    let mut server = Server::init(
+        &args.server_addr,
+        pbo,
+        &args.path,
+        split_rule,
+        &args.server_passwd,
+    )
+    .await?;
     server.recv_block_loop().await?;
     Ok(())
 }
@@ -526,12 +529,12 @@ pub async fn capture_remote_server(args: &Args) -> Result<()> {
 #[cfg(test)]
 mod test {
     use std::fs::File;
-
     use uuid::Uuid;
     #[test]
     fn uuid_gen() {
         let uuid = Uuid::new_v4();
         // aa3293ec-5cec-4984-aa19-56d462bdc0eb
+        // dc5b475b-5e68-4401-b824-d27d90f45755
         println!("{}", uuid);
     }
     #[test]

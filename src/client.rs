@@ -8,8 +8,10 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 use std::path::Path;
+use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tracing::error;
 use uuid::Uuid;
 
 use crate::Args;
@@ -83,6 +85,29 @@ impl Client {
         self.send_pcapng(pcapng_t, config).await?;
         Ok(())
     }
+    /// Very simple auth function.
+    async fn auth(&mut self, password: &str) -> Result<bool> {
+        let password_vec = password.as_bytes();
+        let password_vec_len = password_vec.len() as u32;
+        let password_vec_len_encode = password_vec_len.to_be_bytes(); // BigEndian on internet
+
+        // first send 4 bytes length
+        self.stream.write_all(&password_vec_len_encode).await?;
+        // second send the data
+        self.stream.write_all(&password_vec).await?;
+
+        // wait server send auth result
+        let server_resp_len = self.stream.read_u32().await?;
+        let mut buf = vec![0u8; server_resp_len as usize];
+        let _ = self.stream.read_exact(&mut buf).await?;
+
+        let server_resp_str = String::from_utf8_lossy(&buf).to_string();
+        if server_resp_str == "ok" {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 const CLIENT_UUID_PATH: &str = ".client_uuid";
@@ -111,16 +136,23 @@ pub async fn capture_remote_client(cap: &mut Capture, args: &Args) -> Result<()>
     let p_uuid = find_uuid()?;
     let mut client = Client::connect(&args.server_addr).await?;
 
-    let pcapng = cap.gen_pcapng(pbo);
-    for block in pcapng.blocks {
-        // shb and idb
-        client.send_block(block, &p_uuid, config).await?;
-        update_captured_stat();
-    }
+    if client.auth(&args.server_passwd).await? {
+        let pcapng = cap.gen_pcapng(pbo);
+        for block in pcapng.blocks {
+            // shb and idb
+            client.send_block(block, &p_uuid, config).await?;
+            update_captured_stat();
+        }
 
-    loop {
-        let block = cap.next_with_pcapng().expect("client capture packet failed");
-        client.send_block(block, &p_uuid, config).await?;
-        update_captured_stat();
+        loop {
+            let block = cap
+                .next_with_pcapng()
+                .expect("client capture packet failed");
+            client.send_block(block, &p_uuid, config).await?;
+            update_captured_stat();
+        }
+    } else {
+        error!("password is wrong");
+        Ok(())
     }
 }

@@ -107,6 +107,14 @@ struct Args {
     /// Remote capture server listen addr
     #[arg(long, default_value = "0.0.0.0:12345")]
     server_addr: String,
+
+    /// Remote capture server password
+    #[arg(long, default_value = "123456")]
+    server_passwd: String,
+
+    /// Ignore capture server traffic (this is useful when the remote address is an IP address instead of a domain name, when the remote server is a domain name, please set the filter manually)
+    #[arg(long, action, default_value = "false")]
+    ignore_traffic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -369,8 +377,8 @@ fn print_filter_examples() {
     for e in examples {
         info!("{}", e);
     }
-    let valid_procotol = pcapture::filter::show_valid_protocol();
-    info!("{:?}", valid_procotol);
+    // let valid_procotol = pcapture::filter::show_valid_protocol();
+    // info!("{:?}", valid_procotol);
 }
 
 #[tokio::main]
@@ -399,8 +407,9 @@ async fn main() {
     info!("working...");
     match args.mode.as_str() {
         "local" => {
+            let filter = &args.filter;
             let iface = &args.interface;
-            let mut cap = match Capture::new(&iface) {
+            let mut cap = match Capture::new_with_filters(&iface, filter) {
                 Ok(c) => c,
                 Err(e) => panic!("init the Capture failed: {}", e),
             };
@@ -413,8 +422,17 @@ async fn main() {
             capture_local(&mut cap, &args);
         }
         "client" => {
+            let filter = if args.ignore_traffic {
+                let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
+                let server_addr = server_addr_split[0];
+                let filter = format!("addr={}", server_addr);
+                filter
+            } else {
+                String::new()
+            };
+
             let iface = &args.interface;
-            let mut cap = match Capture::new(&iface) {
+            let mut cap = match Capture::new_with_filters(&iface, &filter) {
                 Ok(c) => c,
                 Err(e) => panic!("init the Capture failed: {}", e),
             };
