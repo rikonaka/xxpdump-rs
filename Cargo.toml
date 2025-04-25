@@ -1,7 +1,13 @@
 [package]
 name = "xxpdump"
 version = "0.1.0"
+authors = ["RikoNaka <xxy1836@gmail.com>"]
+description = "The next generation of traffic capture software"
+repository = "https://github.com/rikonaka/xxpdump-rs"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
 edition = "2024"
+keywords = ["tcpdump", "traffic", "wireshark"]
 
 [dependencies]
 clap = { version="^4", features=["derive"] }

@@ -1,5 +1,9 @@
 # xxpdump-rs
 
+The next generation of traffic capture software.
+
+## Why tcpdump?
+
 The classic packet capture software `tcpdump` is outdated.
 
 My reasons are as follows:
