@@ -12,7 +12,7 @@ keywords = ["tcpdump", "traffic", "wireshark"]
 [dependencies]
 clap = { version="^4", features=["derive"] }
 pnet = { version = "^0", features = ["serde"] }
-pcapture = { version = "^0", features = ["pcapng"] }
+pcapture = { version = "0.1.5", features = ["pcapng"] }
 serde = { version = "^1", features = ["derive"]}
 bincode = { version = "^2", features = ["serde"] }
 tokio = { version = "^1", features = ["full"] }
