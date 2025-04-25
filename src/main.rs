@@ -393,7 +393,7 @@ fn print_filter_examples() {
 }
 
 fn print_valid_procotol() {
-    let valid_procotol = pcapture::filter::show_valid_protocol();
+    let valid_procotol = pcapture::filter::valid_protocol();
     info!("{:?}", valid_procotol);
 }
 
