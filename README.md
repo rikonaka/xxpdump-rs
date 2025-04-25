@@ -73,3 +73,14 @@ This software does not guarantee the security of transmission, so the user needs
 xxpdump --mode server --server-addr '127.0.0.1:12345' --rotate 1h
 ```
 
+Or
+
+```bash
+xxpdump --mode server --server-addr '127.0.0.1:12345' --file-size 100M
+```
+
+Or
+
+```bash
+xxpdump --mode server --server-addr '127.0.0.1:12345' --count 1024
+```
