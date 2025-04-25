@@ -14,6 +14,7 @@ use prettytable::row;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
+use std::iter::zip;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use tracing::Level;
@@ -117,8 +118,8 @@ struct Args {
     server_passwd: String,
 
     /// Ignore capture server traffic (this is useful when the remote address is an IP address instead of a domain name, when the remote server is a domain name, please set the filter manually)
-    #[arg(long, action, default_value = "false")]
-    ignore_traffic: bool,
+    #[arg(long, action, default_value = "true")]
+    ignore_self_traffic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -373,13 +374,19 @@ fn get_file_size(target_file: &str) -> u64 {
 
 fn print_filter_examples() {
     let examples = vec![
-        "tcp",
-        "tcp and port=80",
+        "ip=192.168.1.1 and !tcp",
+        "ip!=192.168.1.1 and port!=80",
         "icmp and ip=192.168.1.1",
         "icmp and (ip=192.168.1.1 or ip=192.168.1.2)",
     ];
-    for e in examples {
-        info!("{}", e);
+    let explains = vec![
+        "Capture packets with IP address 192.168.1.1 and port number 80",
+        "Capture packets with IP address not 192.168.1.1 and port number not 80",
+        "Capture packets with ICMP and IP address 192.168.1.1",
+        "Capture packets with ICMP and IP address 192.168.1.1 or IP address 192.168.1.2",
+    ];
+    for (exa, exp) in zip(examples, explains) {
+        info!("[{}] - {}", exa, exp);
     }
     // let valid_procotol = pcapture::filter::show_valid_protocol();
     // info!("{:?}", valid_procotol);
@@ -436,10 +443,11 @@ async fn main() {
             capture_local(&mut cap, &args);
         }
         "client" => {
-            let filter = if args.ignore_traffic {
+            let filter = if args.ignore_self_traffic {
                 let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
                 let server_addr = server_addr_split[0];
-                let filter = format!("addr={}", server_addr);
+                let server_port = server_addr_split[1];
+                let filter = format!("ip!={} and port!={}", server_addr, server_port);
                 filter
             } else {
                 String::new()
