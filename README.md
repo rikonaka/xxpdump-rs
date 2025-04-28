@@ -19,7 +19,7 @@ My reasons are as follows:
 
 The opportunity for the birth of this software is that I have a server with a small memory and a small hard disk (which means I can't directly back up the traffic on this server and store it locally). I want to try to back up the traffic of this server to a backup server with a large hard disk, but the current tcpdump and other series of software cannot natively support remote transmission backup.
 
-## Discussion about `pcap` has been moved to the `pcapture` [readme page](https://github.com/rikonaka/pcapture-rs) (2025-4-28)
+### Discussion about `pcap` has been moved to the `pcapture` [readme page](https://github.com/rikonaka/pcapture-rs) (2025-4-28)
 
 ## Usage
 
