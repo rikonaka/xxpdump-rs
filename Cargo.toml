@@ -23,3 +23,7 @@ ctrlc = "^3"
 chrono = "^0"
 anyhow = "^1"
 prettytable = "^0"
+
+[profile.release]
+codegen-units = 1
+lto = true
