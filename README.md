@@ -2,6 +2,12 @@
 
 The next generation of traffic capture software.
 
+## Installation
+
+```bash
+cargo install xxpdump
+```
+
 ## Why tcpdump?
 
 The classic packet capture software `tcpdump` is outdated.
