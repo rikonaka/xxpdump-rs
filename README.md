@@ -13,15 +13,7 @@ My reasons are as follows:
 
 The opportunity for the birth of this software is that I have a server with a small memory and a small hard disk (which means I can't directly back up the traffic on this server and store it locally). I want to try to back up the traffic of this server to a backup server with a large hard disk, but the current tcpdump and other series of software cannot natively support remote transmission backup.
 
-## Libpcap Problems
-
-Why not use libpcap to capture packets?
-
-When capturing from the "any" device, or from one of those other devices, in Linux, the libpcap doesn't supply the link-layer header for the real "hardware protocol" like Ethernet, but instead supplies a fake link-layer header for this pseudo-protocol. The [reference 1](https://wiki.wireshark.org/SLL) and [reference 2](https://stackoverflow.com/questions/51358018/linux-cooked-capture-in-packets).
-
-![libpcap problem](./images/libpcap_problem.png)
-
-I have tried running the software from root, but the pseudo header still exists, so I gave up using the pcap library and turned to writing my [own](https://github.com/rikonaka/pcapture-rs).
+## Discussion about `pcap` has been moved to the `pcapture` [readme page](https://github.com/rikonaka/pcapture-rs) (2025-4-28)
 
 ## Usage
 
