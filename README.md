@@ -8,6 +8,14 @@ The next generation of traffic capture software.
 cargo install xxpdump
 ```
 
+## Platform
+
+| Platform           | Note                         |
+| :----------------- | :--------------------------- |
+| Linux              | supported                    |
+| Unix (*BSD, MacOS) | supported                    |
+| Windows            | supported (winpcap or npcap) |
+
 ## Why tcpdump?
 
 The classic packet capture software `tcpdump` is outdated.
