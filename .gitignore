@@ -20,3 +20,5 @@ target/
 *.pcapng
 *.pem
 *.client_uuid
+
+Packet.lib
