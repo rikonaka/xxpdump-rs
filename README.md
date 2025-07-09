@@ -16,7 +16,7 @@ cargo install xxpdump
 | Unix (*BSD, MacOS) | supported                    |
 | Windows            | supported (winpcap or npcap) |
 
-## Why tcpdump?
+## Why not tcpdump?
 
 The classic packet capture software `tcpdump` is outdated.
 
