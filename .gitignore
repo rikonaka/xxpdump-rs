@@ -18,5 +18,5 @@ target/
 
 *.pcap
 *.pcapng
-*.pem
 *.client_uuid
+*.lib

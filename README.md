@@ -4,9 +4,17 @@ The next generation of traffic capture software.
 
 ## Installation
 
+Linux:
+
 ```bash
 cargo install xxpdump
 ```
+
+Windows:
+
+The usage of `npcap` SDK states that users cannot redistribute the contents of the SDK, such as DLL and LIB files, unless your program is for internal use or you obtain authorization. On Windows, it depends on npcap's `Packet.lib` file, so it is not possible to install this software on Windows via `cargo install`.
+
+You can download the `npcap-sdk` file from the [npcap](https://npcap.com/) official website and compile it yourself.
 
 ## Platform
 
