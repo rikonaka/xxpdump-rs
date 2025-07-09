@@ -6,6 +6,7 @@ use std::fs::File;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::debug;
+use tracing::warn;
 
 use crate::Args;
 use crate::file_size_parser;
@@ -61,11 +62,15 @@ fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file
                 .expect(&format!("write pcapng to {} failed", new_path));
         }
 
-        let block = cap.next_with_pcapng().expect("capture packet failed");
-        block
-            .write(&mut fs, pbo)
-            .expect(&format!("write block to file [{}] failed", new_path));
-        update_captured_stat();
+        match cap.next_with_pcapng() {
+            Ok(block) => {
+                block
+                    .write(&mut fs, pbo)
+                    .expect(&format!("write block to file [{}] failed", new_path));
+                update_captured_stat();
+            }
+            Err(e) => warn!("{}", e),
+        }
     }
 }
 
@@ -106,11 +111,15 @@ fn capture_local_by_rotate(
             *write_files += 1;
         }
 
-        let block = cap.next_with_pcapng().expect("capture packet failed");
-        block
-            .write(&mut fs, pbo)
-            .expect(&format!("write block to file [{}] failed", new_path));
-        update_captured_stat();
+        match cap.next_with_pcapng() {
+            Ok(block) => {
+                block
+                    .write(&mut fs, pbo)
+                    .expect(&format!("write block to file [{}] failed", new_path));
+                update_captured_stat();
+            }
+            Err(e) => warn!("{}", e),
+        }
     };
 
     if file_count > 0 {
@@ -139,11 +148,15 @@ fn capture_local_by_none(cap: &mut Capture, path: &str) {
         .expect(&format!("write pcapng to {} failed", path));
 
     loop {
-        let block = cap.next_with_pcapng().expect("capture packet failed");
-        block
-            .write(&mut fs, pbo)
-            .expect(&format!("write block to file [{}] failed", path));
-        update_captured_stat();
+        match cap.next_with_pcapng() {
+            Ok(block) => {
+                block
+                    .write(&mut fs, pbo)
+                    .expect(&format!("write block to file [{}] failed", path));
+                update_captured_stat();
+            }
+            Err(e) => warn!("{}", e),
+        }
     }
 }
 

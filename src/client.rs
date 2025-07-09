@@ -12,6 +12,7 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tracing::error;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::Args;
@@ -145,11 +146,13 @@ pub async fn capture_remote_client(cap: &mut Capture, args: &Args) -> Result<()>
         }
 
         loop {
-            let block = cap
-                .next_with_pcapng()
-                .expect("client capture packet failed");
-            client.send_block(block, &p_uuid, config).await?;
-            update_captured_stat();
+            match cap.next_with_pcapng() {
+                Ok(block) => {
+                    client.send_block(block, &p_uuid, config).await?;
+                    update_captured_stat();
+                }
+                Err(e) => warn!("{}", e),
+            }
         }
     } else {
         error!("password is wrong");
