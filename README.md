@@ -41,7 +41,13 @@ The opportunity for the birth of this software is that I have a server with a sm
 
 ### Local Capture
 
-Very simple to start using.
+Very simple to start using, capture all traffics on all interfaces.
+
+```bash
+xxpdump -p xxpdump.pcapng
+```
+
+Or specify interface.
 
 ```bash
 xxpdump -i ens33 -p xxpdump.pcapng
