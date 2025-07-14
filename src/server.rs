@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bincode;
 use bincode::config::Configuration;
-use pcapture::EnhancedPacketBlock;
+use pcapture::pcapng::EnhancedPacketBlock;
 use pcapture::PcapByteOrder;
 use pcapture::pcapng::InterfaceDescriptionBlock;
 use pcapture::pcapng::InterfaceStatisticsBlock;
