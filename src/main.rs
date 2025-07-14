@@ -37,7 +37,7 @@ const DEFAULT_BUFFER_SIZE: usize = 65535;
 // The default is 65535.
 const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 
-/// Next generation tcpdump and udpdump.
+/// Next generation packet dump software.
 #[derive(Parser, Debug)]
 #[command(author = "RikoNaka", version, about, long_about = None)]
 struct Args {
@@ -74,8 +74,8 @@ struct Args {
     immediate: bool,
 
     /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
-    #[arg(short, long, default_value_t = 0)]
-    timeout: u64,
+    #[arg(short, long, default_value_t = 0.0)]
+    timeout: f32,
 
     /// Set the filter when saving the packet, e.g. --filter ip=192.168.1.1 and port=80, please use --filter-examples to show more examples
     #[arg(short, long, default_value = "")]
@@ -430,16 +430,14 @@ async fn main() {
         "local" => {
             let filter = &args.filter;
             let iface = &args.interface;
-            let mut cap = match Capture::new_with_filters(&iface, filter) {
+            let mut cap = match Capture::new(&iface, Some(&filter)) {
                 Ok(c) => c,
                 Err(e) => panic!("init the Capture failed: {}", e),
             };
-            cap.promiscuous(args.promisc)
-                .expect("set promiscuous failed");
-            cap.buffer_size(args.buffer_size)
-                .expect("set buffer_size failed");
+            cap.promiscuous(args.promisc);
+            cap.buffer_size(args.buffer_size);
             cap.snaplen(args.snaplen);
-            cap.timeout(args.timeout).expect("set timeout failed");
+            cap.timeout(args.timeout);
             capture_local(&mut cap, &args);
         }
         "client" => {
@@ -455,16 +453,14 @@ async fn main() {
             };
 
             let iface = &args.interface;
-            let mut cap = match Capture::new_with_filters(&iface, &filter) {
+            let mut cap = match Capture::new(&iface, Some(&filter)) {
                 Ok(c) => c,
                 Err(e) => panic!("init the Capture failed: {}", e),
             };
-            cap.promiscuous(args.promisc)
-                .expect("set promiscuous failed");
-            cap.buffer_size(args.buffer_size)
-                .expect("set buffer_size failed");
+            cap.promiscuous(args.promisc);
+            cap.buffer_size(args.buffer_size);
             cap.snaplen(args.snaplen);
-            cap.timeout(args.timeout).expect("set timeout failed");
+            cap.timeout(args.timeout);
             capture_remote_client(&mut cap, &args)
                 .await
                 .expect("capture remote client error");

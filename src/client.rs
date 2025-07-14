@@ -138,7 +138,7 @@ pub async fn capture_remote_client(cap: &mut Capture, args: &Args) -> Result<()>
     let mut client = Client::connect(&args.server_addr).await?;
 
     if client.auth(&args.server_passwd).await? {
-        let pcapng = cap.gen_pcapng(pbo);
+        let pcapng = cap.gen_pcapng(pbo)?;
         for block in pcapng.blocks {
             // shb and idb
             client.send_block(block, &p_uuid, config).await?;
@@ -146,7 +146,7 @@ pub async fn capture_remote_client(cap: &mut Capture, args: &Args) -> Result<()>
         }
 
         loop {
-            match cap.next_with_pcapng() {
+            match cap.next_as_pcapng() {
                 Ok(block) => {
                     client.send_block(block, &p_uuid, config).await?;
                     update_captured_stat();

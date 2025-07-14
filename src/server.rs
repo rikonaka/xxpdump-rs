@@ -1,8 +1,8 @@
 use anyhow::Result;
 use bincode;
 use bincode::config::Configuration;
-use pcapture::pcapng::EnhancedPacketBlock;
 use pcapture::PcapByteOrder;
+use pcapture::pcapng::EnhancedPacketBlock;
 use pcapture::pcapng::InterfaceDescriptionBlock;
 use pcapture::pcapng::InterfaceStatisticsBlock;
 use pcapture::pcapng::NameResolutionBlock;

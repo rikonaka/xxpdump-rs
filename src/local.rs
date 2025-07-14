@@ -16,10 +16,12 @@ use crate::rotate_parser;
 use crate::update_captured_stat;
 
 fn capture_local_by_count(cap: &mut Capture, path: &str, count: usize) {
-    let mut pcapng = cap.gen_pcapng(PcapByteOrder::WiresharkDefault);
+    let mut pcapng = cap
+        .gen_pcapng(PcapByteOrder::WiresharkDefault)
+        .expect("gen pcapng failed");
     for _ in 0..count {
         let block = cap
-            .next_with_pcapng()
+            .next_as_pcapng()
             .expect(&format!("capture local packet failed"));
         pcapng.append(block);
         update_captured_stat();
@@ -40,7 +42,7 @@ fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file
     // write the first header to file
     let mut new_path = format!("{}.{}", i, path);
     let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-    let pcapng = cap.gen_pcapng(pbo);
+    let pcapng = cap.gen_pcapng(pbo).expect("gen pcapng failed");
     pcapng
         .write(&mut fs)
         .expect(&format!("write pcapng to {} failed", new_path));
@@ -62,7 +64,7 @@ fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file
                 .expect(&format!("write pcapng to {} failed", new_path));
         }
 
-        match cap.next_with_pcapng() {
+        match cap.next_as_pcapng() {
             Ok(block) => {
                 block
                     .write(&mut fs, pbo)
@@ -91,7 +93,7 @@ fn capture_local_by_rotate(
     // write the first header to file
     let mut new_path = format!("{}.{}", now_str, path);
     let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-    let pcapng = cap.gen_pcapng(pbo);
+    let pcapng = cap.gen_pcapng(pbo).expect("gen pcapng data failed");
     pcapng
         .write(&mut fs)
         .expect(&format!("write pcapng to {} failed", new_path));
@@ -111,7 +113,7 @@ fn capture_local_by_rotate(
             *write_files += 1;
         }
 
-        match cap.next_with_pcapng() {
+        match cap.next_as_pcapng() {
             Ok(block) => {
                 block
                     .write(&mut fs, pbo)
@@ -142,13 +144,13 @@ fn capture_local_by_rotate(
 fn capture_local_by_none(cap: &mut Capture, path: &str) {
     let pbo = PcapByteOrder::WiresharkDefault;
     let mut fs = File::create(&path).expect(&format!("can not create file [{}]", path));
-    let pcapng = cap.gen_pcapng(pbo);
+    let pcapng = cap.gen_pcapng(pbo).expect("gen pcapng failed");
     pcapng
         .write(&mut fs)
         .expect(&format!("write pcapng to {} failed", path));
 
     loop {
-        match cap.next_with_pcapng() {
+        match cap.next_as_pcapng() {
             Ok(block) => {
                 block
                     .write(&mut fs, pbo)
