@@ -12,9 +12,19 @@ cargo install xxpdump
 
 Windows:
 
-The usage of `npcap` SDK states that users cannot redistribute the contents of the SDK, such as DLL and LIB files, unless your program is for internal use or you obtain authorization. On Windows, it depends on npcap's `Packet.lib` file, so it is not possible to install this software on Windows via `cargo install`.
+Download the `npcap-sdk` file from the [npcap](https://npcap.com/) official website and compile it yourself.
 
-You can download the `npcap-sdk` file from the [npcap](https://npcap.com/) official website and compile it yourself.
+Change the path below to the path where your `Packet.lib` is located.
+
+```bash
+$env:LIB="D:\test"
+```
+
+Then install it through command.
+
+```bash
+cargo install xxpdump
+```
 
 ## Platform
 
