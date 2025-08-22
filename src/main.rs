@@ -220,6 +220,7 @@ fn list_interface() {
     table.add_row(row!["ID", "NAME", "DESC", "MAC", "IP"]);
 
     for (ind, info) in info_vec.into_iter().enumerate() {
+        let ind = ind + 1;
         let mut cells = vec![Cell::new(&ind.to_string())];
         let tmp_vec = &info[0];
         let ips = &info[1];
