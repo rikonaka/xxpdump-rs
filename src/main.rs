@@ -1,7 +1,6 @@
 use bincode::Decode;
 use bincode::Encode;
 use chrono::Local;
-use clap::ArgAction;
 use clap::Parser;
 use pcapture;
 use pcapture::Capture;
@@ -59,7 +58,7 @@ struct Args {
     rotate: String, // 1S, 1M, 1D .etc
 
     /// Set promiscuous mode on or off
-    #[arg(long, action(ArgAction::SetTrue), default_value_t = true)]
+    #[arg(long, action, default_value_t = true)]
     promisc: bool,
 
     /// Set the buffer size for incoming packet data
@@ -71,7 +70,7 @@ struct Args {
     snaplen: usize,
 
     /// Set immediate mode on or off, by default, this is on for fast capture
-    #[arg(long, action(ArgAction::SetTrue))]
+    #[arg(long, action)]
     immediate: bool,
 
     /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
@@ -83,11 +82,11 @@ struct Args {
     filter: String,
 
     /// Show the filter parameter more examples
-    #[arg(long, action(ArgAction::SetTrue), default_value_t = true)]
+    #[arg(long, action, default_value_t = false)]
     filter_examples: bool,
 
     /// Show the filter valid protocol
-    #[arg(long, action(ArgAction::SetTrue), default_value_t = false)]
+    #[arg(long, action, default_value_t = false)]
     filter_valid_protocol: bool,
 
     /// Set the program work mode, by default, this is 'local' mode and save traffic file in local storege
@@ -95,7 +94,7 @@ struct Args {
     mode: String,
 
     /// Print the list of the network interfaces available on the system
-    #[arg(long, action(ArgAction::SetTrue), default_value_t = false)]
+    #[arg(long, action, default_value_t = false)]
     list_interface: bool,
 
     /// Set the save file path
@@ -119,7 +118,7 @@ struct Args {
     server_passwd: String,
 
     /// Ignore capture server traffic (this is useful when the remote address is an IP address instead of a domain name, when the remote server is a domain name, please set the filter manually)
-    #[arg(long, action(ArgAction::SetTrue), default_value_t = true)]
+    #[arg(long, action, default_value_t = true)]
     ignore_self_traffic: bool,
 }
 
