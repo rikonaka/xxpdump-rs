@@ -4,6 +4,12 @@ The next generation of traffic capture software.
 
 ## Installation
 
+### Precompiled version
+
+You can download it directly from the release page. Please note that you need to have installed the npcap driver on Windows (it will be automatically installed when you install Wireshark, or you can download and install it separately, and select winpcap compatibility mode when installing).
+
+### Compile and install it yourself
+
 Linux:
 
 ```bash
