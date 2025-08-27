@@ -42,83 +42,83 @@ const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 #[command(author = "RikoNaka", version, about, long_about = None)]
 struct Args {
     /// The interface to capture, by default, this is 'any' which means pseudo-device that captures on all interfaces
-    #[arg(short, long, default_value = "any")]
+    #[arg(short = 'i', long, default_value = "any")]
     interface: String,
 
     /// Exit after receiving 'count' packets
-    #[arg(long, default_value_t = 0)]
+    #[arg(short = 'c', long, default_value_t = 0)]
     count: usize,
 
     /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
-    #[arg(long, default_value = "")]
+    #[arg(short = 'C', long, default_value = "")]
     file_size: String, // 1MB, 1KB, 1GB .etc
 
     /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
-    #[arg(long, default_value = "")]
+    #[arg(short = 'r', long, default_value = "")]
     rotate: String, // 1S, 1M, 1D .etc
 
     /// Set promiscuous mode on or off
-    #[arg(long, action, default_value_t = true)]
+    #[arg(short = 'p', long, action, default_value_t = true)]
     promisc: bool,
 
     /// Set the buffer size for incoming packet data
-    #[arg(long, default_value_t = DEFAULT_BUFFER_SIZE)]
+    #[arg(short = 'b', long, default_value_t = DEFAULT_BUFFER_SIZE)]
     buffer_size: usize,
 
     /// Set the snaplen size (the maximum length of a packet captured into the buffer), useful if you only want certain headers, but not the entire packet
-    #[arg(long, default_value_t = DEFAULT_SNAPLEN_SIZE)]
+    #[arg(short = 's', long, default_value_t = DEFAULT_SNAPLEN_SIZE)]
     snaplen: usize,
 
     /// Set immediate mode on or off, by default, this is on for fast capture
-    #[arg(long, action)]
+    #[arg(short = 'I', long, action)]
     immediate: bool,
 
     /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
-    #[arg(short, long, default_value_t = 0.0)]
+    #[arg(short = 't', long, default_value_t = 0.0)]
     timeout: f32,
 
     /// Set the filter when saving the packet, e.g. --filter ip=192.168.1.1 and port=80, please use --filter-examples to show more examples
-    #[arg(short, long, default_value = "")]
+    #[arg(short = 'f', long, default_value = "")]
     filter: String,
 
     /// Show the filter parameter more examples
-    #[arg(long, action, default_value_t = false)]
+    #[arg(long, alias = "fe", action, default_value_t = false)]
     filter_examples: bool,
 
     /// Show the filter valid protocol
-    #[arg(long, action, default_value_t = false)]
+    #[arg(long, alias = "fvp", action, default_value_t = false)]
     filter_valid_protocol: bool,
 
     /// Set the program work mode, by default, this is 'local' mode and save traffic file in local storege
-    #[arg(short, long, default_value = "local")]
+    #[arg(short = 'm', long, default_value = "local")]
     mode: String,
 
     /// Print the list of the network interfaces available on the system
-    #[arg(long, action, default_value_t = false)]
+    #[arg(long, alias = "li", action, default_value_t = false)]
     list_interface: bool,
 
     /// Set the save file path
-    #[arg(short, long, default_value = "xxpdump.pcapng")]
-    path: String,
+    #[arg(short = 'w', long, default_value = "xxpdump.pcapng")]
+    write: String,
 
     /// Used in conjunction with the -C option, this will limit the number of files created to the specified number, and begin overwriting files from the beginning
-    #[arg(long, default_value_t = 0)]
+    #[arg(short = 'F', long, alias = "fc", default_value_t = 0)]
     file_count: usize,
 
     /// Log display level
-    #[arg(long, default_value = "info")]
+    #[arg(short = 'l', long, alias = "ll", default_value = "info")]
     log_level: String,
 
     /// Remote capture server listen addr
-    #[arg(long, default_value = "0.0.0.0:12345")]
+    #[arg(long, alias = "sa", default_value = "0.0.0.0:12345")]
     server_addr: String,
 
     /// Remote capture server password
-    #[arg(long, default_value = "123456")]
+    #[arg(long, alias = "sp", default_value = "123456")]
     server_passwd: String,
 
     /// Ignore capture server traffic (this is useful when the remote address is an IP address instead of a domain name, when the remote server is a domain name, please set the filter manually)
-    #[arg(long, action, default_value_t = true)]
+    #[arg(long, alias = "ist", action, default_value_t = true)]
     ignore_self_traffic: bool,
 }
 
@@ -172,7 +172,10 @@ fn init_log_level(log_level: &str) {
     let level = match log_level {
         "info" => Level::INFO,
         "debug" => Level::DEBUG,
-        _ => panic!("unknown log level [{}]", log_level),
+        _ => panic!(
+            "unknown log level [{}], valid parameters are 'info' and 'debug'",
+            log_level
+        ),
     };
 
     let subscriber = FmtSubscriber::builder().with_max_level(level).finish();

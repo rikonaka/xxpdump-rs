@@ -54,37 +54,37 @@ The opportunity for the birth of this software is that I have a server with a sm
 Very simple to start using, capture all traffics on all interfaces.
 
 ```bash
-xxpdump -p xxpdump.pcapng
+xxpdump -w xxpdump.pcapng
 ```
 
 Or specify interface.
 
 ```bash
-xxpdump -i ens33 -p xxpdump.pcapng
+xxpdump -i ens33 -w xxpdump.pcapng
 ```
 
 Capture the traffic and apply filter.
 
 ```bash
-xxpdump -i ens33 -p xxpdump.pcapng -f 'tcp and (ip=192.168.1.1 or ip=192.168.1.2) and dstport=80'
+xxpdump -i ens33 -w xxpdump.pcapng -f 'tcp and (ip=192.168.1.1 or ip=192.168.1.2) and dstport=80'
 ```
 
 Capture the traffic and split according to time.
 
 ```bash
-xxpdump -i ens33 -p xxpdump.pcapng --rotate 60s
+xxpdump -i ens33 -w xxpdump.pcapng --rotate 60s
 ```
 
 Capture the traffic and split according to file size.
 
 ```bash
-xxpdump -i ens33 -p xxpdump.pcapng --file-size 10M
+xxpdump -i ens33 -w xxpdump.pcapng --file-size 10M
 ```
 
 Capture the traffic and split according to packet count.
 
 ```bash
-xxpdump -i ens33 -p xxpdump.pcapng --count 1024
+xxpdump -i ens33 -w xxpdump.pcapng --count 1024
 ```
 
 ### Remote Capture

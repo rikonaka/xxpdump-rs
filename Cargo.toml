@@ -1,6 +1,6 @@
 [package]
 name = "xxpdump"
-version = "0.1.8"
+version = "0.2.0"
 authors = ["RikoNaka <xxy1836@gmail.com>"]
 description = "The next generation of traffic capture software"
 repository = "https://github.com/rikonaka/xxpdump-rs"

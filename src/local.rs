@@ -165,7 +165,7 @@ fn capture_local_by_none(cap: &mut Capture, path: &str) {
 pub fn capture_local(cap: &mut Capture, args: &Args) {
     debug!("open save file path");
 
-    let path = &args.path;
+    let path = &args.write;
     let count = args.count;
     let file_size_str = &args.file_size;
     let file_count = args.file_count;

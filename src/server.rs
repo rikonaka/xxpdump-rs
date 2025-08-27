@@ -162,7 +162,7 @@ enum SplitRule {
 
 impl SplitRule {
     fn init(args: &Args) -> SplitRule {
-        let path = &args.path;
+        let path = &args.write;
         let split = if args.count > 0 {
             debug!("split count");
             let sc = SplitCount::init(args.count, path);
@@ -517,7 +517,7 @@ pub async fn capture_remote_server(args: &Args) -> Result<()> {
     let mut server = Server::init(
         &args.server_addr,
         pbo,
-        &args.path,
+        &args.write,
         split_rule,
         &args.server_passwd,
     )
