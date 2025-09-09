@@ -9,6 +9,8 @@ use pcapture;
 use pcapture::Capture;
 use pcapture::PcapByteOrder;
 #[cfg(feature = "libpcap")]
+use pcapture::filter::Filters;
+#[cfg(feature = "libpcap")]
 use pcapture::pcapng::EnhancedPacketBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::GeneralBlock;
@@ -217,6 +219,7 @@ pub fn capture_local(args: &Args) {
 #[cfg(feature = "libpcap")]
 pub fn capture_local(args: &Args) {
     let pbo = PcapByteOrder::WiresharkDefault;
+    let filters = Filters::parser(&args.filter).expect("parser filter failed");
 
     let devices = Device::list().expect("can not get device from libpcap");
     let device = devices
@@ -225,13 +228,26 @@ pub fn capture_local(args: &Args) {
         .expect("can not found interface");
 
     let cap = Capture::from_device(device.clone()).expect("init the Capture failed");
-    let mut cap = cap
-        .promisc(args.promisc)
-        .buffer_size(args.buffer_size as i32)
-        .snaplen(args.snaplen as i32)
-        .timeout(args.timeout as i32)
-        .open()
-        .expect("can not open libpcap capture");
+    let mut cap = if args.interface != "any" {
+        let cap = cap
+            .promisc(args.promisc)
+            .buffer_size(args.buffer_size as i32)
+            .snaplen(args.snaplen as i32)
+            .timeout(args.timeout as i32)
+            .immediate_mode(true)
+            .open()
+            .expect("can not open libpcap capture");
+        cap
+    } else {
+        let cap = cap
+            .buffer_size(args.buffer_size as i32)
+            .snaplen(args.snaplen as i32)
+            .timeout(args.timeout as i32)
+            .immediate_mode(true)
+            .open()
+            .expect("can not open libpcap capture");
+        cap
+    };
 
     debug!("open save file path");
 
@@ -244,16 +260,35 @@ pub fn capture_local(args: &Args) {
     let mut pcapng = PcapNg::new_fake();
 
     if count > 0 {
-        for _ in 0..count {
+        let mut num_packet = 0;
+        loop {
+            if num_packet >= count {
+                break;
+            }
             let packet = cap
                 .next_packet()
                 .expect("can not get next packet from libpcap");
             let packet_data = packet.data;
-            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                .expect("create enhanced packet block failed");
-            let block = GeneralBlock::EnhancedPacketBlock(eb);
-            pcapng.append(block);
-            update_captured_stat();
+            match filters.as_ref() {
+                Some(fls) => {
+                    if fls.check(packet_data).expect("filter check failed") {
+                        let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                            .expect("create enhanced packet block failed");
+                        let block = GeneralBlock::EnhancedPacketBlock(eb);
+                        pcapng.append(block);
+                        update_captured_stat();
+                        num_packet += 1;
+                    }
+                }
+                None => {
+                    let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                        .expect("create enhanced packet block failed");
+                    let block = GeneralBlock::EnhancedPacketBlock(eb);
+                    pcapng.append(block);
+                    update_captured_stat();
+                    num_packet += 1;
+                }
+            }
         }
         pcapng
             .write_all(path)
@@ -293,13 +328,28 @@ pub fn capture_local(args: &Args) {
             match cap.next_packet() {
                 Ok(packet) => {
                     let packet_data = packet.data;
-                    let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                        .expect("create enhanced packet block failed");
-                    let block = GeneralBlock::EnhancedPacketBlock(eb);
-                    block
-                        .write(&mut fs, pbo)
-                        .expect(&format!("write block to file [{}] failed", new_path));
-                    update_captured_stat();
+                    match filters.as_ref() {
+                        Some(fls) => {
+                            if fls.check(packet_data).expect("filter check failed") {
+                                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                                    .expect("create enhanced packet block failed");
+                                let block = GeneralBlock::EnhancedPacketBlock(eb);
+                                block
+                                    .write(&mut fs, pbo)
+                                    .expect(&format!("write block to file [{}] failed", new_path));
+                                update_captured_stat();
+                            }
+                        }
+                        None => {
+                            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                                .expect("create enhanced packet block failed");
+                            let block = GeneralBlock::EnhancedPacketBlock(eb);
+                            block
+                                .write(&mut fs, pbo)
+                                .expect(&format!("write block to file [{}] failed", new_path));
+                            update_captured_stat();
+                        }
+                    }
                 }
                 Err(e) => warn!("{}", e),
             }
@@ -339,13 +389,28 @@ pub fn capture_local(args: &Args) {
             match cap.next_packet() {
                 Ok(packet) => {
                     let packet_data = packet.data;
-                    let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                        .expect("create enhanced packet block failed");
-                    let block = GeneralBlock::EnhancedPacketBlock(eb);
-                    block
-                        .write(&mut fs, pbo)
-                        .expect(&format!("write block to file [{}] failed", new_path));
-                    update_captured_stat();
+                    match filters.as_ref() {
+                        Some(fls) => {
+                            if fls.check(packet_data).expect("filter check failed") {
+                                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                                    .expect("create enhanced packet block failed");
+                                let block = GeneralBlock::EnhancedPacketBlock(eb);
+                                block
+                                    .write(&mut fs, pbo)
+                                    .expect(&format!("write block to file [{}] failed", new_path));
+                                update_captured_stat();
+                            }
+                        }
+                        None => {
+                            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                                .expect("create enhanced packet block failed");
+                            let block = GeneralBlock::EnhancedPacketBlock(eb);
+                            block
+                                .write(&mut fs, pbo)
+                                .expect(&format!("write block to file [{}] failed", new_path));
+                            update_captured_stat();
+                        }
+                    }
                 }
                 Err(e) => warn!("{}", e),
             }
@@ -376,13 +441,28 @@ pub fn capture_local(args: &Args) {
             match cap.next_packet() {
                 Ok(packet) => {
                     let packet_data = packet.data;
-                    let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                        .expect("create enhanced packet block failed");
-                    let block = GeneralBlock::EnhancedPacketBlock(eb);
-                    block
-                        .write(&mut fs, pbo)
-                        .expect(&format!("write block to file [{}] failed", path));
-                    update_captured_stat();
+                    match filters.as_ref() {
+                        Some(fls) => {
+                            if fls.check(packet_data).expect("filter check failed") {
+                                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                                    .expect("create enhanced packet block failed");
+                                let block = GeneralBlock::EnhancedPacketBlock(eb);
+                                block
+                                    .write(&mut fs, pbo)
+                                    .expect(&format!("write block to file [{}] failed", path));
+                                update_captured_stat();
+                            }
+                        }
+                        None => {
+                            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                                .expect("create enhanced packet block failed");
+                            let block = GeneralBlock::EnhancedPacketBlock(eb);
+                            block
+                                .write(&mut fs, pbo)
+                                .expect(&format!("write block to file [{}] failed", path));
+                            update_captured_stat();
+                        }
+                    }
                 }
                 Err(e) => warn!("{}", e),
             }

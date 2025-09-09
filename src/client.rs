@@ -10,6 +10,8 @@ use pcapture::Capture;
 #[cfg(feature = "libpnet")]
 use pcapture::PcapByteOrder;
 #[cfg(feature = "libpcap")]
+use pcapture::filter::Filters;
+#[cfg(feature = "libpcap")]
 use pcapture::pcapng::EnhancedPacketBlock;
 use pcapture::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
@@ -213,6 +215,8 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
     let p_uuid = find_uuid()?;
     let mut client = Client::connect(&args.server_addr).await?;
 
+    let filters = Filters::parser(&args.filter).expect("parser filter failed");
+
     if client.auth(&args.server_passwd).await? {
         let pcapng = PcapNg::new_fake();
         for block in pcapng.blocks {
@@ -225,11 +229,24 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
             match cap.next_packet() {
                 Ok(packet) => {
                     let packet_data = packet.data;
-                    let ep = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                        .expect("create enhanced packet block failed");
-                    let block = GeneralBlock::EnhancedPacketBlock(ep);
-                    client.send_block(block, &p_uuid, config).await?;
-                    update_captured_stat();
+                    match filters.as_ref() {
+                        Some(fls) => {
+                            if fls.check(packet_data).expect("filter check failed") {
+                                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                                    .expect("create enhanced packet block failed");
+                                let block = GeneralBlock::EnhancedPacketBlock(eb);
+                                client.send_block(block, &p_uuid, config).await?;
+                                update_captured_stat();
+                            }
+                        }
+                        None => {
+                            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                                .expect("create enhanced packet block failed");
+                            let block = GeneralBlock::EnhancedPacketBlock(eb);
+                            client.send_block(block, &p_uuid, config).await?;
+                            update_captured_stat();
+                        }
+                    }
                 }
                 Err(e) => warn!("{}", e),
             }

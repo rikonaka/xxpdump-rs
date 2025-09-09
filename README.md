@@ -13,7 +13,13 @@ You can download it directly from the release page. Please note that you need to
 Linux:
 
 ```bash
-cargo install xxpdump
+cargo install xxpdump --no-default-features --features "libpcap"
+```
+
+Or use `libpnet`:
+
+```bash
+cargo install xxpdump --no-default-features --features "libpnet"
 ```
 
 Windows:
