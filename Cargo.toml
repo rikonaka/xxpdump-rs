@@ -1,6 +1,6 @@
 [package]
 name = "xxpdump"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["RikoNaka <xxy1836@gmail.com>"]
 description = "The next generation of traffic capture software"
 repository = "https://github.com/rikonaka/xxpdump-rs"
@@ -23,7 +23,13 @@ ctrlc = "^3"
 chrono = "^0"
 anyhow = "^1"
 prettytable = "^0"
+pcap = { version = "^2", optional = true }
 
 [profile.release]
 codegen-units = 1
 lto = true
+
+[features]
+default = ["libpcap"]
+libpnet = []
+libpcap = ["pcap"]

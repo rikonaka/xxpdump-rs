@@ -1,9 +1,19 @@
 use anyhow::Result;
 use bincode;
 use bincode::config::Configuration;
+#[cfg(feature = "libpcap")]
+use pcap::Capture;
+#[cfg(feature = "libpcap")]
+use pcap::Device;
+#[cfg(feature = "libpnet")]
 use pcapture::Capture;
+#[cfg(feature = "libpnet")]
 use pcapture::PcapByteOrder;
+#[cfg(feature = "libpcap")]
+use pcapture::pcapng::EnhancedPacketBlock;
 use pcapture::pcapng::GeneralBlock;
+#[cfg(feature = "libpcap")]
+use pcapture::pcapng::PcapNg;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
@@ -131,7 +141,29 @@ fn find_uuid() -> Result<String> {
     Ok(uuid)
 }
 
-pub async fn capture_remote_client(cap: &mut Capture, args: &Args) -> Result<()> {
+#[cfg(feature = "libpnet")]
+pub async fn capture_remote_client(args: &Args) -> Result<()> {
+    let filter = if args.ignore_self_traffic {
+        let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
+        let server_addr = server_addr_split[0];
+        let server_port = server_addr_split[1];
+        // ignore communication with the server
+        let filter = format!("ip!={} and port!={}", server_addr, server_port);
+        filter
+    } else {
+        String::new()
+    };
+
+    let iface = &args.interface;
+    let mut cap = match Capture::new(&iface, Some(&filter)) {
+        Ok(c) => c,
+        Err(e) => panic!("init the Capture failed: {}", e),
+    };
+    cap.promiscuous(args.promisc);
+    cap.buffer_size(args.buffer_size);
+    cap.snaplen(args.snaplen);
+    cap.timeout(args.timeout);
+
     let pbo = PcapByteOrder::WiresharkDefault; // default
     let config = bincode::config::standard();
     let p_uuid = find_uuid()?;
@@ -148,6 +180,54 @@ pub async fn capture_remote_client(cap: &mut Capture, args: &Args) -> Result<()>
         loop {
             match cap.next_as_pcapng() {
                 Ok(block) => {
+                    client.send_block(block, &p_uuid, config).await?;
+                    update_captured_stat();
+                }
+                Err(e) => warn!("{}", e),
+            }
+        }
+    } else {
+        error!("password is wrong");
+        Ok(())
+    }
+}
+
+#[cfg(feature = "libpcap")]
+pub async fn capture_remote_client(args: &Args) -> Result<()> {
+    let devices = Device::list().expect("can not get device from libpcap");
+    let device = devices
+        .iter()
+        .find(|&d| d.name == args.interface)
+        .expect("can not found interface");
+
+    let cap = Capture::from_device(device.clone()).expect("init the Capture failed");
+    let mut cap = cap
+        .promisc(args.promisc)
+        .buffer_size(args.buffer_size as i32)
+        .snaplen(args.snaplen as i32)
+        .timeout(args.timeout as i32)
+        .open()
+        .expect("can not open libpcap capture");
+
+    let config = bincode::config::standard();
+    let p_uuid = find_uuid()?;
+    let mut client = Client::connect(&args.server_addr).await?;
+
+    if client.auth(&args.server_passwd).await? {
+        let pcapng = PcapNg::new_fake();
+        for block in pcapng.blocks {
+            // shb and idb
+            client.send_block(block, &p_uuid, config).await?;
+            update_captured_stat();
+        }
+
+        loop {
+            match cap.next_packet() {
+                Ok(packet) => {
+                    let packet_data = packet.data;
+                    let ep = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                        .expect("create enhanced packet block failed");
+                    let block = GeneralBlock::EnhancedPacketBlock(ep);
                     client.send_block(block, &p_uuid, config).await?;
                     update_captured_stat();
                 }

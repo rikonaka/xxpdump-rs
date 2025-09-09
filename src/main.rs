@@ -2,9 +2,15 @@ use bincode::Decode;
 use bincode::Encode;
 use chrono::Local;
 use clap::Parser;
+#[cfg(feature = "libpcap")]
+use pcap::Device;
+#[cfg(feature = "libpnet")]
 use pcapture;
+#[cfg(feature = "libpnet")]
 use pcapture::Capture;
+#[cfg(feature = "libpnet")]
 use pcapture::Device;
+#[cfg(feature = "libpnet")]
 use pnet::ipnetwork::IpNetwork;
 use prettytable::Cell;
 use prettytable::Row;
@@ -14,6 +20,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
 use std::iter::zip;
+#[cfg(feature = "libpcap")]
+use std::net::IpAddr;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use tracing::Level;
@@ -182,9 +190,7 @@ fn init_log_level(log_level: &str) {
     tracing::subscriber::set_global_default(subscriber).expect("failed to set subscriber");
 }
 
-// fn remote_capture_server(mut cap: Capture<Active>, path: &str) {
-// }
-
+#[cfg(feature = "libpnet")]
 fn list_interface() {
     let devices = Device::list();
     debug!("init devices list done");
@@ -214,6 +220,54 @@ fn list_interface() {
             }
             None => tmp_vec.push(String::from("NOMAC")),
         }
+        let info = vec![tmp_vec, ips];
+        info_vec.push(info);
+    }
+
+    let mut table = Table::new();
+    table.add_row(row!["ID", "NAME", "DESC", "MAC", "IP"]);
+
+    for (ind, info) in info_vec.into_iter().enumerate() {
+        let ind = ind + 1;
+        let mut cells = vec![Cell::new(&ind.to_string())];
+        let tmp_vec = &info[0];
+        let ips = &info[1];
+        for t in tmp_vec {
+            cells.push(Cell::new(&t));
+        }
+        let ips_str = ips.join("\n");
+        cells.push(Cell::new(&ips_str));
+        let row = Row::new(cells);
+        table.add_row(row);
+    }
+    table.printstd();
+}
+
+#[cfg(feature = "libpcap")]
+fn list_interface() {
+    let devices = Device::list().expect("get device from libpcap failed");
+    debug!("init devices list done");
+
+    let mut info_vec = Vec::new();
+    for device in devices {
+        let mut tmp_vec = Vec::new();
+        tmp_vec.push(device.name.clone());
+        match &device.desc {
+            Some(desc) => tmp_vec.push((*desc).clone()),
+            None => tmp_vec.push(String::from("NODESC")),
+        }
+        let mut ips = Vec::new();
+        for address in &device.addresses {
+            match address.addr {
+                IpAddr::V4(ipv4) => {
+                    ips.push(ipv4.to_string());
+                }
+                IpAddr::V6(ipv6) => {
+                    ips.push(ipv6.to_string());
+                }
+            }
+        }
+        tmp_vec.push(String::from("LIBPCAP NOMAC"));
         let info = vec![tmp_vec, ips];
         info_vec.push(info);
     }
@@ -431,41 +485,9 @@ async fn main() {
 
     info!("working...");
     match args.mode.as_str() {
-        "local" => {
-            let filter = &args.filter;
-            let iface = &args.interface;
-            let mut cap = match Capture::new(&iface, Some(&filter)) {
-                Ok(c) => c,
-                Err(e) => panic!("init the Capture failed: {}", e),
-            };
-            cap.promiscuous(args.promisc);
-            cap.buffer_size(args.buffer_size);
-            cap.snaplen(args.snaplen);
-            cap.timeout(args.timeout);
-            capture_local(&mut cap, &args);
-        }
+        "local" => capture_local(&args),
         "client" => {
-            let filter = if args.ignore_self_traffic {
-                let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
-                let server_addr = server_addr_split[0];
-                let server_port = server_addr_split[1];
-                // ignore communication with the server
-                let filter = format!("ip!={} and port!={}", server_addr, server_port);
-                filter
-            } else {
-                String::new()
-            };
-
-            let iface = &args.interface;
-            let mut cap = match Capture::new(&iface, Some(&filter)) {
-                Ok(c) => c,
-                Err(e) => panic!("init the Capture failed: {}", e),
-            };
-            cap.promiscuous(args.promisc);
-            cap.buffer_size(args.buffer_size);
-            cap.snaplen(args.snaplen);
-            cap.timeout(args.timeout);
-            capture_remote_client(&mut cap, &args)
+            capture_remote_client(&args)
                 .await
                 .expect("capture remote client error");
         }
