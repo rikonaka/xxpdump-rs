@@ -7,8 +7,6 @@ use pcap::Device;
 #[cfg(feature = "libpnet")]
 use pcapture;
 #[cfg(feature = "libpnet")]
-use pcapture::Capture;
-#[cfg(feature = "libpnet")]
 use pcapture::Device;
 #[cfg(feature = "libpnet")]
 use pnet::ipnetwork::IpNetwork;

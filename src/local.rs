@@ -200,15 +200,15 @@ pub fn capture_local(args: &Args) {
     let rotate_str = &args.rotate;
 
     if count > 0 {
-        capture_local_by_count(cap, path, count);
+        capture_local_by_count(&mut cap, path, count);
     } else if file_size_str.len() > 0 {
         let file_size = file_size_parser(file_size_str);
-        capture_local_by_filesize(cap, path, file_size, file_count);
+        capture_local_by_filesize(&mut cap, path, file_size, file_count);
     } else if rotate_str.len() > 0 {
         let (rotate, rotate_format) = rotate_parser(rotate_str);
-        capture_local_by_rotate(cap, path, rotate, file_count, rotate_format);
+        capture_local_by_rotate(&mut cap, path, rotate, file_count, rotate_format);
     } else {
-        capture_local_by_none(cap, path);
+        capture_local_by_none(&mut cap, path);
     }
 
     quitting("local");
