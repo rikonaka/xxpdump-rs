@@ -31,51 +31,50 @@ static HEADERS_SHB: LazyLock<Mutex<HashMap<String, SectionHeaderBlock>>> =
 static HEADERS_IDB: LazyLock<Mutex<HashMap<String, InterfaceDescriptionBlock>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub struct HEADERS;
+pub fn update_headers_shb(uuid: &str, shb: SectionHeaderBlock) {
+    let mut p = match HEADERS_SHB.lock() {
+        Ok(p) => p,
+        Err(e) => panic!("try update and lock HEADERS_SHB failed: {}", e),
+    };
+    (*p).insert(uuid.to_string(), shb);
+}
 
-impl HEADERS {
-    pub fn update_headers_shb(uuid: &str, shb: SectionHeaderBlock) {
-        let mut p = match HEADERS_SHB.lock() {
-            Ok(p) => p,
-            Err(e) => panic!("try update and lock HEADERS_SHB failed: {}", e),
-        };
-        (*p).insert(uuid.to_string(), shb);
-    }
-    pub fn get_header_shb(uuid: &str) -> Option<SectionHeaderBlock> {
-        let p = match HEADERS_SHB.lock() {
-            Ok(p) => p,
-            Err(e) => panic!("lock HEADERS_SHB failed: {}", e),
-        };
-        debug!("HEADERS_SHB: {:?}", p);
-        match p.get(uuid) {
-            Some(shb) => Some(shb.clone()),
-            None => None,
-        }
-    }
-    pub fn update_headers_idb(uuid: &str, idb: InterfaceDescriptionBlock) {
-        let mut p = match HEADERS_IDB.lock() {
-            Ok(p) => p,
-            Err(e) => panic!("try update and lock HEADERS_IDB failed: {}", e),
-        };
-        (*p).insert(uuid.to_string(), idb);
-    }
-    pub fn get_header_idb(uuid: &str) -> Option<InterfaceDescriptionBlock> {
-        let p = match HEADERS_IDB.lock() {
-            Ok(p) => p,
-            Err(e) => panic!("lock HEADERS_IDB failed: {}", e),
-        };
-        debug!("HEADERS_IDB: {:?}", p);
-        match p.get(uuid) {
-            Some(idb) => Some(idb.clone()),
-            None => None,
-        }
+pub fn get_header_shb(uuid: &str) -> Option<SectionHeaderBlock> {
+    let p = match HEADERS_SHB.lock() {
+        Ok(p) => p,
+        Err(e) => panic!("lock HEADERS_SHB failed: {}", e),
+    };
+    debug!("HEADERS_SHB: {:?}", p);
+    match p.get(uuid) {
+        Some(shb) => Some(shb.clone()),
+        None => None,
     }
 }
 
-fn gen_file_name_simple(path: &str, uuid: &str) -> String {
+pub fn update_headers_idb(uuid: &str, idb: InterfaceDescriptionBlock) {
+    let mut p = match HEADERS_IDB.lock() {
+        Ok(p) => p,
+        Err(e) => panic!("try update and lock HEADERS_IDB failed: {}", e),
+    };
+    (*p).insert(uuid.to_string(), idb);
+}
+
+pub fn get_header_idb(uuid: &str) -> Option<InterfaceDescriptionBlock> {
+    let p = match HEADERS_IDB.lock() {
+        Ok(p) => p,
+        Err(e) => panic!("lock HEADERS_IDB failed: {}", e),
+    };
+    debug!("HEADERS_IDB: {:?}", p);
+    match p.get(uuid) {
+        Some(idb) => Some(idb.clone()),
+        None => None,
+    }
+}
+
+fn gen_file_name(path: &str, client_uuid: &str) -> String {
     let now = Local::now();
     let now_str = now.format(ROTATE_SEC_FORMAT);
-    let uuid_split: Vec<&str> = uuid.split("-").collect();
+    let uuid_split: Vec<&str> = client_uuid.split("-").collect();
     let filename = format!("{}.{}.{}", now_str, uuid_split[0], path);
     filename
 }
@@ -93,14 +92,14 @@ fn write_packet(
                 bincode::decode_from_slice(&pcapng_t.p_data, config)?;
             let (shb, _) = decode;
             shb.write(fs, pbo)?;
-            HEADERS::update_headers_shb(client_uuid, shb);
+            update_headers_shb(client_uuid, shb);
         }
         PcapNgType::InterfaceDescriptionBlock => {
             let decode: (InterfaceDescriptionBlock, usize) =
                 bincode::decode_from_slice(&pcapng_t.p_data, config)?;
             let (idb, _) = decode;
             idb.write(fs, pbo)?;
-            HEADERS::update_headers_idb(client_uuid, idb);
+            update_headers_idb(client_uuid, idb);
         }
         PcapNgType::EnhancedPacketBlock => {
             let decode: (EnhancedPacketBlock, usize) =
@@ -166,7 +165,7 @@ impl SplitCount {
         }
     }
     fn next_write_file(&mut self, uuid: &str) -> String {
-        let next_write_file = gen_file_name_simple(&self.path, uuid);
+        let next_write_file = gen_file_name(&self.path, uuid);
         next_write_file
     }
     pub fn write(&mut self, client_uuid: &str, pcapng_t: PcapNgTransport) -> Result<()> {
@@ -177,14 +176,14 @@ impl SplitCount {
             let next_write_file = self.next_write_file(client_uuid);
             let mut fs = File::create(&next_write_file)?;
 
-            let shb = match HEADERS::get_header_shb(client_uuid) {
+            let shb = match get_header_shb(client_uuid) {
                 Some(shb) => shb,
                 None => {
                     error!("{}", shb_not_found(client_uuid));
                     return Ok(());
                 }
             };
-            let idb = match HEADERS::get_header_idb(client_uuid) {
+            let idb = match get_header_idb(client_uuid) {
                 Some(idb) => idb,
                 None => {
                     error!("{}", idb_not_found(client_uuid));
@@ -227,7 +226,7 @@ impl SplitFileSize {
         }
     }
     fn next_write_file(&mut self, uuid: &str) -> String {
-        let next_write_file = gen_file_name_simple(&self.path, uuid);
+        let next_write_file = gen_file_name(&self.path, uuid);
         next_write_file
     }
     pub fn write(&mut self, client_uuid: &str, pcapng_t: PcapNgTransport) -> Result<()> {
@@ -285,7 +284,7 @@ impl SplitRotate {
         }
     }
     fn next_write_file(&self, client_uuid: &str) -> String {
-        let next_write_file = gen_file_name_simple(&self.path, client_uuid);
+        let next_write_file = gen_file_name(&self.path, client_uuid);
         next_write_file
     }
     pub fn write(&mut self, client_uuid: &str, pcapng_t: PcapNgTransport) -> Result<()> {

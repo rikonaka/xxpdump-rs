@@ -1,19 +1,65 @@
 use anyhow::Result;
 use bincode::config;
 use pcapture::PcapByteOrder;
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tracing::error;
 use tracing::info;
-use tracing::warn;
 
 use crate::Args;
-use crate::PACKETS_SERVER_RECVED;
 use crate::PcapNgTransport;
 use crate::split_rule::SplitRule;
 use crate::update_server_recved_stat;
+
+static PACKETS_SERVER_TOTAL_RECVED: LazyLock<Arc<Mutex<usize>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(0)));
+
+fn get_server_total_recved() -> usize {
+    let packets_server_recved = match PACKETS_SERVER_TOTAL_RECVED.lock() {
+        Ok(p) => *p,
+        Err(e) => panic!("try to lock the PACKETS_SERVER_TOTAL_RECVED failed: {}", e),
+    };
+    packets_server_recved
+}
+
+static SERVER_PIPE: LazyLock<Arc<Mutex<VecDeque<PcapNgTransport>>>> = LazyLock::new(|| {
+    let v = VecDeque::new();
+    Arc::new(Mutex::new(v))
+});
+
+struct ServerPipe {
+    split_rule: SplitRule,
+}
+
+impl ServerPipe {
+    fn server_pipe_push(pcapng_t: PcapNgTransport) {
+        match SERVER_PIPE.lock() {
+            Ok(mut pipe) => pipe.push_back(pcapng_t),
+            Err(e) => panic!("try to lock the SERVER_PIPE failed: {}", e),
+        }
+    }
+    fn server_pipe_pop() -> Option<PcapNgTransport> {
+        match SERVER_PIPE.lock() {
+            Ok(mut pipe) => pipe.pop_front(),
+            Err(e) => panic!("try to lock the SERVER_PIPE failed: {}", e),
+        }
+    }
+    fn server_writer_thread(&self) {
+        let split_rule = self.split_rule;
+        loop {
+            match Self::server_pipe_pop() {
+                Some(t) => (),
+                None => (),
+            }
+        }
+    }
+}
 
 struct Server {
     listener: TcpListener,
@@ -30,75 +76,7 @@ impl Server {
             server_passwd: server_passwd.to_string(),
         })
     }
-    async fn recv_pcapng(socket: &mut TcpStream, split_rule: SplitRule) -> Result<()> {
-        let mut uuid = String::new();
-
-        let get_server_recved = || -> usize {
-            let packets_server_recved: usize = match PACKETS_SERVER_RECVED.lock() {
-                Ok(p) => *p,
-                Err(e) => panic!("try to lock the PACKETS_SERVER_RECVED failed: {}", e),
-            };
-            packets_server_recved
-        };
-
-        loop {
-            let recv_len = match socket.read_u32().await {
-                Ok(l) => l,
-                Err(e) => {
-                    let recved = get_server_recved();
-                    error!(
-                        " total recved [{}], read step1 data len failed [{}]: {}",
-                        recved, &uuid, e
-                    );
-                    return Ok(());
-                }
-            };
-
-            let mut buf = vec![0u8; recv_len as usize];
-            match socket.read_exact(&mut buf).await {
-                Ok(_) => (),
-                Err(e) => {
-                    let recved = get_server_recved();
-                    error!(
-                        " total recved [{}], read step2 data failed [{}]: {}",
-                        recved, &uuid, e
-                    );
-                    return Ok(());
-                }
-            };
-
-            let split_rule = self.split_rule;
-            let decode: (PcapNgTransport, usize) = bincode::decode_from_slice(&buf, config)?;
-            let (pcapng_t, decode_len) = decode;
-            if decode_len == recv_len as usize {
-                // it should equal
-                if writer.client_uuid.len() == 0 {
-                    writer.update_client_uuid(&pcapng_t.p_uuid)?;
-                }
-                writer.write(&pcapng_t, pbo, config)?;
-                update_server_recved_stat();
-                uuid = pcapng_t.p_uuid;
-            } else {
-                warn!("decode_len[{}] != recv_len[{}]", decode_len, recv_len);
-            }
-        }
-    }
-    async fn recv_block_loop(&mut self) -> Result<()> {
-        loop {
-            let (mut socket, _) = self.listener.accept().await?;
-
-            if self.auth(&mut socket).await? {
-                // the default format is pcapng
-                tokio::spawn(async move {
-                    match Self::recv_pcapng(&mut socket).await {
-                        Ok(_) => (),
-                        Err(e) => error!("recv pcapng from failed: {}", e), // ignore the error and keep running
-                    }
-                });
-            }
-        }
-    }
-    /// very simple server auth.
+    /// very simple server auth
     async fn auth(&self, socket: &mut TcpStream) -> Result<bool> {
         let recv_len = socket.read_u32().await?;
 
@@ -120,6 +98,54 @@ impl Server {
             Ok(false)
         }
     }
+    async fn recv_pcapng_t(&mut self, socket: &mut TcpStream, split_rule: SplitRule) -> Result<()> {
+        let mut uuid = String::new();
+        let config = config::standard();
+
+        loop {
+            let pcapng_t_len = socket.read_u32().await?;
+            let mut buf = vec![0u8; pcapng_t_len as usize];
+            socket.read_exact(&mut buf).await?;
+            let decode: (PcapNgTransport, usize) = bincode::decode_from_slice(&buf, config)?;
+
+            let (pcapng_t, decode_len) = decode;
+            if decode_len == pcapng_t_len as usize {
+                // it should equal
+                if writer.client_uuid.len() == 0 {
+                    writer.update_client_uuid(&pcapng_t.p_uuid)?;
+                }
+                writer.write(&pcapng_t, pbo, config)?;
+                update_server_recved_stat();
+                uuid = pcapng_t.p_uuid;
+            } else {
+                error!(
+                    "decode_len[{}] != recv_len[{}], ignore this data",
+                    decode_len, pcapng_t_len
+                );
+            }
+        }
+    }
+    async fn run(&mut self) -> Result<()> {
+        loop {
+            let (mut stream, _addr) = self.listener.accept().await?;
+            if self.auth(&mut stream).await? {
+                // the default format is pcapng
+                tokio::spawn(async move {
+                    match self.recv_pcapng_t(&mut stream).await {
+                        Ok(_) => (),
+                        Err(e) => {
+                            let server_total_recved = get_server_total_recved();
+                            // ignore the error and keep running
+                            error!(
+                                "recv pcapng from failed: {}, total recv packet size: {}",
+                                e, server_total_recved
+                            );
+                        }
+                    }
+                });
+            }
+        }
+    }
 }
 
 pub async fn capture_remote_server(args: &Args) -> Result<()> {
@@ -128,7 +154,10 @@ pub async fn capture_remote_server(args: &Args) -> Result<()> {
     let config = config::standard();
     let split_rule = SplitRule::init(args, pbo, config);
     let mut server = Server::init(&args.server_addr, split_rule, &args.server_passwd).await?;
-    server.recv_block_loop().await?;
+    match server.run().await {
+        Ok(_) => (),
+        Err(e) => error!("server run failed: {}", e),
+    }
     Ok(())
 }
 
