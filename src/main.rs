@@ -37,7 +37,6 @@ use local::capture_local;
 use server::capture_remote_server;
 
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
-static PACKETS_SERVER_RECVED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
 // The default is 65535. This should always be larger than the snaplen.
 const DEFAULT_BUFFER_SIZE: usize = 65535;
