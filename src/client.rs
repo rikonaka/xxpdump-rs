@@ -16,10 +16,14 @@ use pcapture::pcapng::EnhancedPacketBlock;
 use pcapture::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::PcapNg;
+#[cfg(feature = "libpcap")]
+use pnet::ipnetwork::IpNetwork;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 use std::path::Path;
+#[cfg(feature = "libpcap")]
+use subnetwork::NetmaskExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -42,28 +46,30 @@ impl Client {
         let stream = TcpStream::connect(&addr).await?;
         Ok(Client { stream })
     }
-    /// Client only send data not recv.
-    async fn send_pcapng(
-        &mut self,
-        pcapng_t: PcapNgTransport,
-        config: Configuration,
-    ) -> Result<()> {
-        let encode_1 = bincode::encode_to_vec(pcapng_t, config)?;
-        let encode_len = encode_1.len() as u32;
-        let encode_2 = encode_len.to_be_bytes(); // BigEndian on internet
 
-        // first send 4 bytes length
-        self.stream.write_all(&encode_2).await?;
-        // second send the data
-        self.stream.write_all(&encode_1).await?;
-        Ok(())
-    }
-    async fn send_block(
+    /// Client only send data not recv.
+    pub async fn send_block(
         &mut self,
         block: GeneralBlock,
         p_uuid: &str,
         config: Configuration,
     ) -> Result<()> {
+        async fn send_with_pcapng_transport(
+            stream: &mut TcpStream,
+            pcapng_t: PcapNgTransport,
+            config: Configuration,
+        ) -> Result<()> {
+            let encode_1 = bincode::encode_to_vec(pcapng_t, config)?;
+            let encode_len = encode_1.len() as u32;
+            let encode_2 = encode_len.to_be_bytes(); // BigEndian on internet
+
+            // first send 4 bytes length
+            stream.write_all(&encode_2).await?;
+            // second send the data
+            stream.write_all(&encode_1).await?;
+            Ok(())
+        }
+
         let (p_type, p_data) = match block {
             GeneralBlock::SectionHeaderBlock(shb) => (
                 PcapNgType::SectionHeaderBlock,
@@ -95,7 +101,7 @@ impl Client {
             p_uuid: p_uuid.to_string(),
             p_data,
         };
-        self.send_pcapng(pcapng_t, config).await?;
+        send_with_pcapng_transport(&mut self.stream, pcapng_t, config).await?;
         Ok(())
     }
     /// Very simple auth function.
@@ -218,7 +224,29 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
     let filters = Filters::parser(&args.filter).expect("parser filter failed");
 
     if client.auth(&args.server_passwd).await? {
-        let pcapng = PcapNg::new_fake();
+        let if_name = &device.name;
+        let if_description = match &device.desc {
+            Some(d) => d.clone(),
+            None => String::new(),
+        };
+
+        let mut ips = Vec::new();
+        for address in &device.addresses {
+            let addr = address.addr;
+            let netmask = address.netmask;
+            let prefix = match netmask {
+                Some(addr) => {
+                    let netmask_ext = NetmaskExt::from_addr(addr);
+                    netmask_ext.get_prefix()
+                }
+                None => 0,
+            };
+            let ipn = IpNetwork::new(addr, prefix).expect("create IpNetwork failed");
+            ips.push(ipn);
+        }
+        let mac = None;
+        let pcapng = PcapNg::new_raw(if_name, &if_description, &ips, mac);
+
         for block in pcapng.blocks {
             // shb and idb
             client.send_block(block, &p_uuid, config).await?;

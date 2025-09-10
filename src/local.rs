@@ -16,9 +16,13 @@ use pcapture::pcapng::EnhancedPacketBlock;
 use pcapture::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::PcapNg;
+#[cfg(feature = "libpcap")]
+use pnet::ipnetwork::IpNetwork;
 use std::fs::File;
 use std::time::Duration;
 use std::time::Instant;
+#[cfg(feature = "libpcap")]
+use subnetwork::NetmaskExt;
 use tracing::debug;
 use tracing::warn;
 
@@ -257,9 +261,31 @@ pub fn capture_local(args: &Args) {
     let file_count = args.file_count;
     let rotate_str = &args.rotate;
 
-    let mut pcapng = PcapNg::new_fake();
+    let if_name = &device.name;
+    let if_description = match &device.desc {
+        Some(d) => d.clone(),
+        None => String::new(),
+    };
+
+    let mut ips = Vec::new();
+    for address in &device.addresses {
+        let addr = address.addr;
+        let netmask = address.netmask;
+        let prefix = match netmask {
+            Some(addr) => {
+                let netmask_ext = NetmaskExt::from_addr(addr);
+                netmask_ext.get_prefix()
+            }
+            None => 0,
+        };
+        let ipn = IpNetwork::new(addr, prefix).expect("create IpNetwork failed");
+        ips.push(ipn);
+    }
+    let mac = None;
+    let mut pcapng = PcapNg::new_raw(if_name, &if_description, &ips, mac);
 
     if count > 0 {
+        // count split
         let mut num_packet = 0;
         loop {
             if num_packet >= count {
@@ -294,6 +320,7 @@ pub fn capture_local(args: &Args) {
             .write_all(path)
             .expect(&format!("write pcapng to file [{}] failed", path));
     } else if file_size_str.len() > 0 {
+        // file size split
         let file_size = file_size_parser(file_size_str);
         let mut i = 0;
 
@@ -355,6 +382,7 @@ pub fn capture_local(args: &Args) {
             }
         }
     } else if rotate_str.len() > 0 {
+        // rotate split
         let (rotate, rotate_format) = rotate_parser(rotate_str);
 
         let mut start_time = Instant::now();

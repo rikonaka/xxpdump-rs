@@ -30,6 +30,7 @@ use tracing_subscriber::FmtSubscriber;
 mod client;
 mod local;
 mod server;
+mod split_rule;
 
 use client::capture_remote_client;
 use local::capture_local;
@@ -146,14 +147,6 @@ struct PcapNgTransport {
     pub p_type: PcapNgType,
     pub p_uuid: String,
     pub p_data: Vec<u8>,
-}
-
-fn gen_file_name_simple(path: &str, uuid: &str) -> String {
-    let now = Local::now();
-    let now_str = now.format(ROTATE_SEC_FORMAT);
-    let uuid_split: Vec<&str> = uuid.split("-").collect();
-    let filename = format!("{}.{}.{}", now_str, uuid_split[0], path);
-    filename
 }
 
 /* SPLIT LINE */
