@@ -25,12 +25,6 @@ use crate::file_size_parser;
 use crate::get_file_size;
 use crate::rotate_parser;
 
-static HEADERS_SHB: LazyLock<Mutex<HashMap<String, SectionHeaderBlock>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-static HEADERS_IDB: LazyLock<Mutex<HashMap<String, InterfaceDescriptionBlock>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 pub fn update_headers_shb(uuid: &str, shb: SectionHeaderBlock) {
     let mut p = match HEADERS_SHB.lock() {
         Ok(p) => p,
@@ -168,7 +162,8 @@ impl SplitCount {
         let next_write_file = gen_file_name(&self.path, uuid);
         next_write_file
     }
-    pub fn write(&mut self, client_uuid: &str, pcapng_t: PcapNgTransport) -> Result<()> {
+    pub fn write(&mut self, pcapng_t: PcapNgTransport) -> Result<()> {
+        let client_uuid = &pcapng_t.p_uuid;
         self.count_current += 1;
         if self.count_current >= self.count_threshold {
             // update the target file
@@ -229,7 +224,8 @@ impl SplitFileSize {
         let next_write_file = gen_file_name(&self.path, uuid);
         next_write_file
     }
-    pub fn write(&mut self, client_uuid: &str, pcapng_t: PcapNgTransport) -> Result<()> {
+    pub fn write(&mut self, pcapng_t: PcapNgTransport) -> Result<()> {
+        let client_uuid = &pcapng_t.p_uuid;
         let filesize = get_file_size(&self.current_file);
         if filesize >= self.filesize_threshold {
             let new_path = self.next_write_file(client_uuid);
@@ -287,7 +283,8 @@ impl SplitRotate {
         let next_write_file = gen_file_name(&self.path, client_uuid);
         next_write_file
     }
-    pub fn write(&mut self, client_uuid: &str, pcapng_t: PcapNgTransport) -> Result<()> {
+    pub fn write(&mut self, pcapng_t: PcapNgTransport) -> Result<()> {
+        let client_uuid = &pcapng_t.p_uuid;
         let ep_secs = self.start_time.elapsed().as_secs();
         if ep_secs > self.rotate_threshold {
             let new_path = self.next_write_file(client_uuid);
@@ -336,7 +333,8 @@ impl SplitNone {
             config,
         }
     }
-    pub fn write(&mut self, client_uuid: &str, pcapng_t: PcapNgTransport) -> Result<()> {
+    pub fn write(&mut self, pcapng_t: PcapNgTransport) -> Result<()> {
+        let client_uuid = &pcapng_t.p_uuid;
         match self.fs {
             Some(_) => (),
             None => {
@@ -408,13 +406,12 @@ impl SplitRule {
             _ => (),
         }
     }
-    pub fn write(&mut self, client_uuid: &str, pcapng_t: &PcapNgTransport) -> Result<()> {
-        // lazy, init once and use it below
+    pub fn write(&mut self, pcapng_t: &PcapNgTransport) -> Result<()> {
         match self {
-            SplitRule::Count(sc) => sc.write(client_uuid, pcapng_t.clone())?,
-            SplitRule::FileSize(sfs) => sfs.write(client_uuid, pcapng_t.clone())?,
-            SplitRule::Rotate(sr) => sr.write(client_uuid, pcapng_t.clone())?,
-            SplitRule::None(sn) => sn.write(client_uuid, pcapng_t.clone())?,
+            SplitRule::Count(sc) => sc.write(pcapng_t.clone())?,
+            SplitRule::FileSize(sfs) => sfs.write(pcapng_t.clone())?,
+            SplitRule::Rotate(sr) => sr.write(pcapng_t.clone())?,
+            SplitRule::None(sn) => sn.write(pcapng_t.clone())?,
         }
         Ok(())
     }

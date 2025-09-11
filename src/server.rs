@@ -1,6 +1,13 @@
 use anyhow::Result;
 use bincode::config;
 use pcapture::PcapByteOrder;
+use pcapture::pcapng::EnhancedPacketBlock;
+use pcapture::pcapng::InterfaceDescriptionBlock;
+use pcapture::pcapng::InterfaceStatisticsBlock;
+use pcapture::pcapng::NameResolutionBlock;
+use pcapture::pcapng::SectionHeaderBlock;
+use pcapture::pcapng::SimplePacketBlock;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -14,6 +21,7 @@ use tracing::info;
 
 use crate::Args;
 use crate::PcapNgTransport;
+use crate::PcapNgType;
 use crate::split_rule::SplitRule;
 use crate::update_server_recved_stat;
 
@@ -38,23 +46,90 @@ struct ServerPipe {
 }
 
 impl ServerPipe {
-    fn server_pipe_push(pcapng_t: PcapNgTransport) {
+    fn push(pcapng_t: PcapNgTransport) {
         match SERVER_PIPE.lock() {
             Ok(mut pipe) => pipe.push_back(pcapng_t),
             Err(e) => panic!("try to lock the SERVER_PIPE failed: {}", e),
         }
     }
-    fn server_pipe_pop() -> Option<PcapNgTransport> {
+    fn pop() -> Option<PcapNgTransport> {
         match SERVER_PIPE.lock() {
             Ok(mut pipe) => pipe.pop_front(),
             Err(e) => panic!("try to lock the SERVER_PIPE failed: {}", e),
         }
     }
-    fn server_writer_thread(&self) {
+    fn thread(&self) {
         let split_rule = self.split_rule;
+        let config = config::standard();
+        let pbo = PcapByteOrder::WiresharkDefault;
+        let mut fs = None;
+        let mut shb_headers = HashMap::new();
+        let mut idb_headers = HashMap::new();
+
+        let write_packet = |pcapng_t: PcapNgTransport| -> Result<()> {
+            let client_uuid = pcapng_t.p_uuid;
+            match fs {
+                Some(fs) => match pcapng_t.p_type {
+                    PcapNgType::SectionHeaderBlock => {
+                        let decode: (SectionHeaderBlock, usize) =
+                            bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+                        let (shb, _) = decode;
+                        shb.write(fs, pbo)?;
+                        shb_headers.insert(client_uuid, shb);
+                    }
+                    PcapNgType::InterfaceDescriptionBlock => {
+                        let decode: (InterfaceDescriptionBlock, usize) =
+                            bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+                        let (idb, _) = decode;
+                        idb.write(fs, pbo)?;
+                        idb_headers.insert(client_uuid, idb);
+                    }
+                    PcapNgType::EnhancedPacketBlock => {
+                        let decode: (EnhancedPacketBlock, usize) =
+                            bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+                        let (epb, _) = decode;
+                        epb.write(fs, pbo)?;
+                    }
+                    PcapNgType::SimplePacketBlock => {
+                        let decode: (SimplePacketBlock, usize) =
+                            bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+                        let (spb, _) = decode;
+                        spb.write(fs, pbo)?;
+                    }
+                    PcapNgType::InterfaceStatisticsBlock => {
+                        let decode: (InterfaceStatisticsBlock, usize) =
+                            bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+                        let (isb, _) = decode;
+                        isb.write(fs, pbo)?;
+                    }
+                    PcapNgType::NameResolutionBlock => {
+                        let decode: (NameResolutionBlock, usize) =
+                            bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+                        let (nrb, _) = decode;
+                        nrb.write(fs, pbo)?;
+                    }
+                },
+                None => (),
+            }
+            Ok(())
+        };
+
         loop {
-            match Self::server_pipe_pop() {
-                Some(t) => (),
+            match Self::pop() {
+                Some(pcapng_t) => {
+                    let client_uuid = pcapng_t.p_uuid;
+                    match pcapng_t.p_type {
+                        PcapNgType::SectionHeaderBlock => {
+                            let decode: (SectionHeaderBlock, usize) =
+                                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+                            let (shb, _size) = decode;
+                            shb.write(fs, pbo)?;
+                            update_headers_idb(client_uuid, idb);
+                            shb_headers.insert(client_uuid, shb);
+                        }
+                        _ => (),
+                    }
+                }
                 None => (),
             }
         }
