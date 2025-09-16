@@ -30,7 +30,7 @@ use tracing_subscriber::FmtSubscriber;
 mod client;
 mod local;
 mod server;
-mod split_rule;
+mod writer;
 
 use client::capture_remote_client;
 use local::capture_local;
@@ -305,7 +305,7 @@ fn quitting(mode: &str) {
 }
 
 /// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
-fn file_size_parser(file_size: &str) -> u64 {
+fn file_size_parser(file_size: &str) -> usize {
     if file_size.len() > 0 {
         let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
         let mut ind = 0;
@@ -319,7 +319,7 @@ fn file_size_parser(file_size: &str) -> u64 {
         let (num, unit) = if ind > 0 && ind <= file_size.len() {
             let num_str = &file_size[..ind];
             let unit = &file_size[ind..];
-            let num: u64 = match num_str.parse() {
+            let num: usize = match num_str.parse() {
                 Ok(n) => n,
                 Err(_) => panic!("wrong file size parameter [{file_size}]"),
             };
@@ -358,7 +358,7 @@ const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
 const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
 
 /// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
-fn rotate_parser(rotate: &str) -> (u64, &str) {
+fn rotate_parser(rotate: &str) -> (usize, &str) {
     if rotate.len() > 0 {
         let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
         let mut ind = 0;
@@ -372,7 +372,7 @@ fn rotate_parser(rotate: &str) -> (u64, &str) {
         let (num, unit) = if ind > 0 && ind <= rotate.len() {
             let num_str = &rotate[..ind];
             let unit = &rotate[ind..];
-            let num: u64 = match num_str.parse() {
+            let num: usize = match num_str.parse() {
                 Ok(n) => n,
                 Err(_) => panic!("wrong file size parameter [{rotate}]"),
             };
