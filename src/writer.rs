@@ -12,6 +12,19 @@ use crate::file_size_parser;
 use crate::rotate_parser;
 
 #[derive(Debug)]
+pub struct SplitRuleNone {
+    write_fs: File,
+}
+
+impl SplitRuleNone {
+    pub fn write(&mut self, block: GeneralBlock) -> Result<()> {
+        let pbo = PcapByteOrder::WiresharkDefault;
+        block.write(&mut self.write_fs, pbo)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
 pub struct SplitRuleRotate {
     shb: Option<SectionHeaderBlock>,
     idb: Option<InterfaceDescriptionBlock>,
@@ -156,7 +169,7 @@ pub enum SplitRule {
     Count(SplieRuleCount),
     FileSize(SplitRuleFileSize),
     Rotate(SplitRuleRotate),
-    None,
+    None(SplitRuleNone),
 }
 
 impl SplitRule {
@@ -215,7 +228,17 @@ impl SplitRule {
             };
             Ok(SplitRule::Rotate(srr))
         } else {
-            Ok(SplitRule::None)
+            let write_fs = File::create(&path)?;
+            let srn = SplitRuleNone { write_fs };
+            Ok(SplitRule::None(srn))
+        }
+    }
+    pub fn write(&mut self, block: GeneralBlock) -> Result<()> {
+        match self {
+            Self::Count(c) => c.write(block),
+            Self::FileSize(f) => f.write(block),
+            Self::Rotate(r) => r.write(block),
+            Self::None(n) => n.write(block),
         }
     }
 }

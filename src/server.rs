@@ -64,8 +64,7 @@ impl ServerPipe {
         let pbo = PcapByteOrder::WiresharkDefault;
         let mut shb_headers = HashMap::new();
         let mut idb_headers = HashMap::new();
-
-        let writer = SplitRule::init(args)?;
+        let split_rule = SplitRule::init(args)?;
 
         loop {
             match Self::pop() {
