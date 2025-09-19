@@ -26,10 +26,10 @@ impl SplitRuleNone {
 #[derive(Debug)]
 pub struct SplitRuleRotate {
     pub shb: Option<SectionHeaderBlock>,
-    pub idb: Option<InterfaceDescriptionBlock>,
+    pub idbs: Option<Vec<InterfaceDescriptionBlock>>,
     threshold_rotate: u64,
     current_rotate: DateTime<Local>,
-    write_path: String,
+    origin_path: String,
     pub write_fs: File,
     // {current_prefix}.write_path => next write path
     current_prefix: String,
@@ -43,7 +43,7 @@ impl SplitRuleRotate {
         if now.timestamp() as u64 >= self.current_rotate.timestamp() as u64 + self.threshold_rotate
         {
             self.current_prefix = now.format(&self.prefix_format).to_string();
-            let write_path = format!("{}.{}", self.current_prefix, self.write_path);
+            let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
             let mut fs = File::create(write_path)?;
 
             if let Some(shb) = &self.shb {
@@ -51,8 +51,10 @@ impl SplitRuleRotate {
             } else {
                 panic!("shb not found");
             }
-            if let Some(idb) = &self.idb {
-                idb.write(&mut fs, pbo)?;
+            if let Some(idbs) = &self.idbs {
+                for idb in idbs {
+                    idb.write(&mut fs, pbo)?;
+                }
             } else {
                 panic!("idb not found");
             }
@@ -68,10 +70,10 @@ impl SplitRuleRotate {
 #[derive(Debug)]
 pub struct SplitRuleFileSize {
     pub shb: Option<SectionHeaderBlock>,
-    pub idb: Option<InterfaceDescriptionBlock>,
+    pub idbs: Option<Vec<InterfaceDescriptionBlock>>,
     threshold_file_size: u64,
     current_file_size: u64,
-    write_path: String,
+    origin_path: String,
     pub write_fs: File,
     // {current_prefix + 1}.write_path => next write path
     current_prefix: usize,
@@ -83,13 +85,11 @@ impl SplitRuleFileSize {
         self.current_file_size += block.size() as u64;
 
         if self.current_file_size >= self.threshold_file_size {
-            if self.file_count > 0 {
-                self.current_prefix += 1;
-                if self.current_prefix >= self.file_count {
-                    self.current_prefix = 0;
-                }
+            self.current_prefix += 1;
+            if self.file_count > 0 && self.current_prefix >= self.file_count {
+                self.current_prefix = 0;
             }
-            let write_path = format!("{}.{}", self.current_prefix, self.write_path);
+            let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
             let mut fs = File::create(write_path)?;
 
             if let Some(shb) = &self.shb {
@@ -97,8 +97,10 @@ impl SplitRuleFileSize {
             } else {
                 panic!("shb not found");
             }
-            if let Some(idb) = &self.idb {
-                idb.write(&mut fs, pbo)?;
+            if let Some(idbs) = &self.idbs {
+                for idb in idbs {
+                    idb.write(&mut fs, pbo)?;
+                }
             } else {
                 panic!("idb not found");
             }
@@ -115,10 +117,10 @@ impl SplitRuleFileSize {
 #[derive(Debug)]
 pub struct SplieRuleCount {
     pub shb: Option<SectionHeaderBlock>,
-    pub idb: Option<InterfaceDescriptionBlock>,
+    pub idbs: Option<Vec<InterfaceDescriptionBlock>>,
     threshold_num_packet: usize,
     current_num_packet: usize,
-    write_path: String,
+    origin_path: String,
     pub write_fs: File,
     // {current_prefix + 1}.write_path => next write path
     current_prefix: usize,
@@ -128,15 +130,17 @@ pub struct SplieRuleCount {
 impl SplieRuleCount {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         self.current_num_packet += 1;
+        println!(
+            "current: {}, prefix: {}, file_count: {}",
+            self.current_num_packet, self.current_prefix, self.file_count
+        );
 
-        if self.current_num_packet >= self.threshold_num_packet {
-            if self.file_count > 0 {
-                self.current_prefix += 1;
-                if self.current_prefix >= self.file_count {
-                    self.current_prefix = 0;
-                }
+        if self.current_num_packet > self.threshold_num_packet {
+            self.current_prefix += 1;
+            if self.file_count > 0 && self.current_prefix >= self.file_count {
+                self.current_prefix = 0;
             }
-            let write_path = format!("{}.{}", self.current_prefix, self.write_path);
+            let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
             let mut fs = File::create(write_path)?;
 
             if let Some(shb) = &self.shb {
@@ -144,8 +148,10 @@ impl SplieRuleCount {
             } else {
                 panic!("shb not found");
             }
-            if let Some(idb) = &self.idb {
-                idb.write(&mut fs, pbo)?;
+            if let Some(idbs) = &self.idbs {
+                for idb in idbs {
+                    idb.write(&mut fs, pbo)?;
+                }
             } else {
                 panic!("idb not found");
             }
@@ -181,10 +187,10 @@ impl SplitRule {
             let write_fs = File::create(&write_path)?;
             let src = SplieRuleCount {
                 shb: None,
-                idb: None,
+                idbs: None,
                 threshold_num_packet: count,
                 current_num_packet: 0,
-                write_path,
+                origin_path: path.clone(),
                 write_fs,
                 current_prefix: 1,
                 file_count,
@@ -196,12 +202,12 @@ impl SplitRule {
             let file_size = file_size_parser(file_size_str);
             let spfs = SplitRuleFileSize {
                 shb: None,
-                idb: None,
+                idbs: None,
                 threshold_file_size: file_size,
                 current_file_size: 0,
-                write_path,
+                origin_path: path.clone(),
                 write_fs,
-                current_prefix: 1,
+                current_prefix: 0,
                 file_count,
             };
             Ok(SplitRule::FileSize(spfs))
@@ -213,10 +219,10 @@ impl SplitRule {
             let write_fs = File::create(&write_path)?;
             let srr = SplitRuleRotate {
                 shb: None,
-                idb: None,
+                idbs: None,
                 threshold_rotate: rotate,
                 current_rotate,
-                write_path,
+                origin_path: write_path,
                 write_fs,
                 prefix_format: rotate_format.to_string(),
                 current_prefix: current_rotate_str,
@@ -246,9 +252,27 @@ impl SplitRule {
     }
     pub fn update_idb(&mut self, idb: InterfaceDescriptionBlock) {
         match self {
-            Self::Count(c) => c.idb = Some(idb),
-            Self::FileSize(f) => f.idb = Some(idb),
-            Self::Rotate(r) => r.idb = Some(idb),
+            Self::Count(c) => {
+                if let Some(idbs) = &mut c.idbs {
+                    idbs.push(idb);
+                } else {
+                    c.idbs = Some(vec![idb]);
+                }
+            }
+            Self::FileSize(f) => {
+                if let Some(idbs) = &mut f.idbs {
+                    idbs.push(idb);
+                } else {
+                    f.idbs = Some(vec![idb]);
+                }
+            }
+            Self::Rotate(r) => {
+                if let Some(idbs) = &mut r.idbs {
+                    idbs.push(idb);
+                } else {
+                    r.idbs = Some(vec![idb]);
+                }
+            }
             Self::None(_) => (),
         }
     }
