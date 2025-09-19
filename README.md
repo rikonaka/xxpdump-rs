@@ -103,10 +103,6 @@ xxpdump -i ens33 -w xxpdump.pcapng --count 1024
 
 **Client**
 
-Running this command will generate a `.client_uuid` file locally to distinguish other clients.
-
-Yes, this software supports different clients backing up to the same server.
-
 ```bash
 xxpdump --mode client -i ens33 --server-addr '127.0.0.1:12345'
 ```

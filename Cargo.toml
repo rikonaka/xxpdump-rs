@@ -16,7 +16,6 @@ pcapture = { version = "^0", features = ["pcapng"] }
 serde = { version = "^1", features = ["derive"]}
 bincode = { version = "^2", features = ["serde"] }
 tokio = { version = "^1", features = ["full"] }
-uuid = { version = "^1", features = ["v4"] }
 tracing = "^0"
 tracing-subscriber = "^0"
 ctrlc = "^3"
@@ -31,6 +30,6 @@ codegen-units = 1
 lto = true
 
 [features]
-default = ["libpcap"]
+default = ["libpnet"]
 libpnet = []
 libpcap = ["pcap"]

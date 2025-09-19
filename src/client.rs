@@ -18,10 +18,6 @@ use pcapture::pcapng::GeneralBlock;
 use pcapture::pcapng::PcapNg;
 #[cfg(feature = "libpcap")]
 use pnet::ipnetwork::IpNetwork;
-use std::fs::File;
-use std::io::Read;
-use std::io::Write;
-use std::path::Path;
 #[cfg(feature = "libpcap")]
 use subnetwork::NetmaskExt;
 use tokio::io::AsyncReadExt;
@@ -29,7 +25,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tracing::error;
 use tracing::warn;
-use uuid::Uuid;
 
 use crate::Args;
 use crate::PcapNgTransport;
@@ -48,12 +43,7 @@ impl Client {
     }
 
     /// Client only send data not recv.
-    pub async fn send_block(
-        &mut self,
-        block: GeneralBlock,
-        p_uuid: &str,
-        config: Configuration,
-    ) -> Result<()> {
+    pub async fn send_block(&mut self, block: GeneralBlock, config: Configuration) -> Result<()> {
         async fn send_with_pcapng_transport(
             stream: &mut TcpStream,
             pcapng_t: PcapNgTransport,
@@ -96,11 +86,7 @@ impl Client {
                 bincode::encode_to_vec(nrb, config)?,
             ),
         };
-        let pcapng_t = PcapNgTransport {
-            p_type,
-            p_uuid: p_uuid.to_string(),
-            p_data,
-        };
+        let pcapng_t = PcapNgTransport { p_type, p_data };
         send_with_pcapng_transport(&mut self.stream, pcapng_t, config).await?;
         Ok(())
     }
@@ -129,28 +115,8 @@ impl Client {
     }
 }
 
-const CLIENT_UUID_PATH: &str = ".client_uuid";
-
-fn find_uuid() -> Result<String> {
-    let client_uuid_path = Path::new(CLIENT_UUID_PATH);
-    let uuid = if client_uuid_path.exists() {
-        let mut client_uuid_fs = File::open(client_uuid_path)?;
-        let mut uuid_str = String::new();
-        let _ = client_uuid_fs.read_to_string(&mut uuid_str)?;
-        uuid_str
-    } else {
-        // create a new uuid for client
-        let uuid = Uuid::new_v4();
-        let uuid_str = uuid.to_string();
-        let mut fs = File::create(client_uuid_path)?;
-        fs.write_all(uuid_str.as_bytes())?;
-        uuid_str
-    };
-    Ok(uuid)
-}
-
 #[cfg(feature = "libpnet")]
-pub async fn capture_remote_client(args: &Args) -> Result<()> {
+pub async fn capture_remote_client(args: Args) -> Result<()> {
     let filter = if args.ignore_self_traffic {
         let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
         let server_addr = server_addr_split[0];
@@ -174,21 +140,20 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
 
     let pbo = PcapByteOrder::WiresharkDefault; // default
     let config = bincode::config::standard();
-    let p_uuid = find_uuid()?;
     let mut client = Client::connect(&args.server_addr).await?;
 
     if client.auth(&args.server_passwd).await? {
         let pcapng = cap.gen_pcapng(pbo)?;
         for block in pcapng.blocks {
             // shb and idb
-            client.send_block(block, &p_uuid, config).await?;
+            client.send_block(block, config).await?;
             update_captured_stat();
         }
 
         loop {
             match cap.next_as_pcapng() {
                 Ok(block) => {
-                    client.send_block(block, &p_uuid, config).await?;
+                    client.send_block(block, config).await?;
                     update_captured_stat();
                 }
                 Err(e) => warn!("{}", e),
@@ -201,7 +166,7 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
 }
 
 #[cfg(feature = "libpcap")]
-pub async fn capture_remote_client(args: &Args) -> Result<()> {
+pub async fn capture_remote_client(args: Args) -> Result<()> {
     let devices = Device::list().expect("can not get device from libpcap");
     let device = devices
         .iter()
@@ -218,7 +183,6 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
         .expect("can not open libpcap capture");
 
     let config = bincode::config::standard();
-    let p_uuid = find_uuid()?;
     let mut client = Client::connect(&args.server_addr).await?;
 
     let filters = Filters::parser(&args.filter).expect("parser filter failed");
@@ -249,7 +213,7 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
 
         for block in pcapng.blocks {
             // shb and idb
-            client.send_block(block, &p_uuid, config).await?;
+            client.send_block(block, config).await?;
             update_captured_stat();
         }
 
@@ -263,7 +227,7 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
                                 let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
                                     .expect("create enhanced packet block failed");
                                 let block = GeneralBlock::EnhancedPacketBlock(eb);
-                                client.send_block(block, &p_uuid, config).await?;
+                                client.send_block(block, config).await?;
                                 update_captured_stat();
                             }
                         }
@@ -271,7 +235,7 @@ pub async fn capture_remote_client(args: &Args) -> Result<()> {
                             let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
                                 .expect("create enhanced packet block failed");
                             let block = GeneralBlock::EnhancedPacketBlock(eb);
-                            client.send_block(block, &p_uuid, config).await?;
+                            client.send_block(block, config).await?;
                             update_captured_stat();
                         }
                     }

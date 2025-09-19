@@ -17,8 +17,7 @@ pub struct SplitRuleNone {
 }
 
 impl SplitRuleNone {
-    pub fn write(&mut self, block: GeneralBlock) -> Result<()> {
-        let pbo = PcapByteOrder::WiresharkDefault;
+    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         block.write(&mut self.write_fs, pbo)?;
         Ok(())
     }
@@ -26,24 +25,22 @@ impl SplitRuleNone {
 
 #[derive(Debug)]
 pub struct SplitRuleRotate {
-    shb: Option<SectionHeaderBlock>,
-    idb: Option<InterfaceDescriptionBlock>,
-    threshold_rotate: usize,
+    pub shb: Option<SectionHeaderBlock>,
+    pub idb: Option<InterfaceDescriptionBlock>,
+    threshold_rotate: u64,
     current_rotate: DateTime<Local>,
     write_path: String,
-    write_fs: File,
+    pub write_fs: File,
     // {current_prefix}.write_path => next write path
     current_prefix: String,
     prefix_format: String,
 }
 
 impl SplitRuleRotate {
-    pub fn write(&mut self, block: GeneralBlock) -> Result<()> {
+    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         let now = Local::now();
-        let pbo = PcapByteOrder::WiresharkDefault;
 
-        if now.timestamp() as usize
-            >= self.current_rotate.timestamp() as usize + self.threshold_rotate
+        if now.timestamp() as u64 >= self.current_rotate.timestamp() as u64 + self.threshold_rotate
         {
             self.current_prefix = now.format(&self.prefix_format).to_string();
             let write_path = format!("{}.{}", self.current_prefix, self.write_path);
@@ -70,21 +67,20 @@ impl SplitRuleRotate {
 
 #[derive(Debug)]
 pub struct SplitRuleFileSize {
-    shb: Option<SectionHeaderBlock>,
-    idb: Option<InterfaceDescriptionBlock>,
-    threshold_file_size: usize,
-    current_file_size: usize,
+    pub shb: Option<SectionHeaderBlock>,
+    pub idb: Option<InterfaceDescriptionBlock>,
+    threshold_file_size: u64,
+    current_file_size: u64,
     write_path: String,
-    write_fs: File,
+    pub write_fs: File,
     // {current_prefix + 1}.write_path => next write path
     current_prefix: usize,
     file_count: usize,
 }
 
 impl SplitRuleFileSize {
-    pub fn write(&mut self, block: GeneralBlock) -> Result<()> {
-        self.current_file_size += block.size();
-        let pbo = PcapByteOrder::WiresharkDefault;
+    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
+        self.current_file_size += block.size() as u64;
 
         if self.current_file_size >= self.threshold_file_size {
             if self.file_count > 0 {
@@ -107,7 +103,7 @@ impl SplitRuleFileSize {
                 panic!("idb not found");
             }
 
-            self.current_file_size = block.size();
+            self.current_file_size = block.size() as u64;
             self.write_fs = fs;
         }
 
@@ -118,21 +114,20 @@ impl SplitRuleFileSize {
 
 #[derive(Debug)]
 pub struct SplieRuleCount {
-    shb: Option<SectionHeaderBlock>,
-    idb: Option<InterfaceDescriptionBlock>,
+    pub shb: Option<SectionHeaderBlock>,
+    pub idb: Option<InterfaceDescriptionBlock>,
     threshold_num_packet: usize,
     current_num_packet: usize,
     write_path: String,
-    write_fs: File,
+    pub write_fs: File,
     // {current_prefix + 1}.write_path => next write path
     current_prefix: usize,
     file_count: usize,
 }
 
 impl SplieRuleCount {
-    pub fn write(&mut self, block: GeneralBlock) -> Result<()> {
+    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         self.current_num_packet += 1;
-        let pbo = PcapByteOrder::WiresharkDefault;
 
         if self.current_num_packet >= self.threshold_num_packet {
             if self.file_count > 0 {
@@ -233,18 +228,28 @@ impl SplitRule {
             Ok(SplitRule::None(srn))
         }
     }
-    pub fn write(&mut self, block: GeneralBlock) -> Result<()> {
+    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         match self {
-            Self::Count(c) => c.write(block),
-            Self::FileSize(f) => f.write(block),
-            Self::Rotate(r) => r.write(block),
-            Self::None(n) => n.write(block),
+            Self::Count(c) => c.write(block, pbo),
+            Self::FileSize(f) => f.write(block, pbo),
+            Self::Rotate(r) => r.write(block, pbo),
+            Self::None(n) => n.write(block, pbo),
         }
     }
-}
-
-pub struct Writer {}
-
-impl Writer {
-    pub fn new() {}
+    pub fn update_shb(&mut self, shb: SectionHeaderBlock) {
+        match self {
+            Self::Count(c) => c.shb = Some(shb),
+            Self::FileSize(f) => f.shb = Some(shb),
+            Self::Rotate(r) => r.shb = Some(shb),
+            Self::None(_) => (),
+        }
+    }
+    pub fn update_idb(&mut self, idb: InterfaceDescriptionBlock) {
+        match self {
+            Self::Count(c) => c.idb = Some(idb),
+            Self::FileSize(f) => f.idb = Some(idb),
+            Self::Rotate(r) => r.idb = Some(idb),
+            Self::None(_) => (),
+        }
+    }
 }

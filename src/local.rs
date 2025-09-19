@@ -1,4 +1,3 @@
-use chrono::Local;
 #[cfg(feature = "libpcap")]
 use pcap::Capture;
 #[cfg(feature = "libpcap")]
@@ -14,178 +13,23 @@ use pcapture::filter::Filters;
 use pcapture::pcapng::EnhancedPacketBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::GeneralBlock;
+use pcapture::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::PcapNg;
 #[cfg(feature = "libpcap")]
 use pnet::ipnetwork::IpNetwork;
-use std::fs::File;
-use std::time::Duration;
-use std::time::Instant;
 #[cfg(feature = "libpcap")]
 use subnetwork::NetmaskExt;
 use tracing::debug;
 use tracing::warn;
 
 use crate::Args;
-use crate::file_size_parser;
-use crate::get_file_size;
-use crate::quitting;
-use crate::rotate_parser;
+use crate::split::SplitRule;
 use crate::update_captured_stat;
 
 #[cfg(feature = "libpnet")]
-fn capture_local_by_count(cap: &mut Capture, path: &str, count: usize) {
-    let mut pcapng = cap
-        .gen_pcapng(PcapByteOrder::WiresharkDefault)
-        .expect("gen pcapng failed");
-    for _ in 0..count {
-        let block = cap
-            .next_as_pcapng()
-            .expect(&format!("capture local packet failed"));
-        pcapng.append(block);
-        update_captured_stat();
-    }
-    pcapng
-        .write_all(path)
-        .expect(&format!("write pcapng to file [{}] failed", path));
-}
-
-#[cfg(feature = "libpnet")]
-fn capture_local_by_filesize(cap: &mut Capture, path: &str, file_size: u64, file_count: usize) {
+pub fn capture_local(args: Args) {
     let pbo = PcapByteOrder::WiresharkDefault;
-    let mut i = 0;
-
-    fn get_next_i(i: usize, file_count: usize) -> usize {
-        if i < file_count - 1 { i + 1 } else { 0 }
-    }
-
-    // write the first header to file
-    let mut new_path = format!("{}.{}", i, path);
-    let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-    let pcapng = cap.gen_pcapng(pbo).expect("gen pcapng failed");
-    pcapng
-        .write(&mut fs)
-        .expect(&format!("write pcapng to {} failed", new_path));
-
-    loop {
-        let local_file_size = get_file_size(&new_path);
-        if local_file_size > file_size {
-            // change write to new file
-            i = if file_count > 0 {
-                get_next_i(i, file_count)
-            } else {
-                i + 1
-            };
-            new_path = format!("{}.{}", i, path);
-            fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-
-            pcapng
-                .write(&mut fs)
-                .expect(&format!("write pcapng to {} failed", new_path));
-        }
-
-        match cap.next_as_pcapng() {
-            Ok(block) => {
-                block
-                    .write(&mut fs, pbo)
-                    .expect(&format!("write block to file [{}] failed", new_path));
-                update_captured_stat();
-            }
-            Err(e) => warn!("{}", e),
-        }
-    }
-}
-
-#[cfg(feature = "libpnet")]
-fn capture_local_by_rotate(
-    cap: &mut Capture,
-    path: &str,
-    rotate: u64,
-    file_count: usize,
-    rotate_format: &str,
-) {
-    let mut start_time = Instant::now();
-    let mut write_files = 0;
-
-    let pbo = PcapByteOrder::WiresharkDefault;
-    let now = Local::now();
-    let now_str = now.format(rotate_format);
-
-    // write the first header to file
-    let mut new_path = format!("{}.{}", now_str, path);
-    let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-    let pcapng = cap.gen_pcapng(pbo).expect("gen pcapng data failed");
-    pcapng
-        .write(&mut fs)
-        .expect(&format!("write pcapng to {} failed", new_path));
-
-    // work progress
-    let mut capture = |write_files: &mut usize| {
-        let duration = start_time.elapsed();
-        if duration.as_secs() >= rotate {
-            start_time += Duration::from_secs(rotate);
-            let now = Local::now();
-            let now_str = now.format(rotate_format);
-            new_path = format!("{}.{}", now_str, path);
-            fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-            pcapng
-                .write(&mut fs)
-                .expect(&format!("write pcapng to {} failed", new_path));
-            *write_files += 1;
-        }
-
-        match cap.next_as_pcapng() {
-            Ok(block) => {
-                block
-                    .write(&mut fs, pbo)
-                    .expect(&format!("write block to file [{}] failed", new_path));
-                update_captured_stat();
-            }
-            Err(e) => warn!("{}", e),
-        }
-    };
-
-    if file_count > 0 {
-        // Used  in conjunction with the -G option,
-        // this will limit the number of rotated dump files that get created,
-        // exiting with status 0 when reaching the limit.
-        loop {
-            capture(&mut write_files);
-            if write_files > file_count {
-                break;
-            }
-        }
-    } else {
-        loop {
-            capture(&mut write_files);
-        }
-    }
-}
-
-#[cfg(feature = "libpnet")]
-fn capture_local_by_none(cap: &mut Capture, path: &str) {
-    let pbo = PcapByteOrder::WiresharkDefault;
-    let mut fs = File::create(&path).expect(&format!("can not create file [{}]", path));
-    let pcapng = cap.gen_pcapng(pbo).expect("gen pcapng failed");
-    pcapng
-        .write(&mut fs)
-        .expect(&format!("write pcapng to {} failed", path));
-
-    loop {
-        match cap.next_as_pcapng() {
-            Ok(block) => {
-                block
-                    .write(&mut fs, pbo)
-                    .expect(&format!("write block to file [{}] failed", path));
-                update_captured_stat();
-            }
-            Err(e) => warn!("{}", e),
-        }
-    }
-}
-
-#[cfg(feature = "libpnet")]
-pub fn capture_local(args: &Args) {
     let filter = &args.filter;
     let iface = &args.interface;
     let mut cap = match Capture::new(&iface, Some(&filter)) {
@@ -199,31 +43,36 @@ pub fn capture_local(args: &Args) {
 
     debug!("open save file path");
 
-    let path = &args.write;
-    let count = args.count;
-    let file_size_str = &args.file_size;
-    let file_count = args.file_count;
-    let rotate_str = &args.rotate;
+    let mut split_rule = SplitRule::init(&args).expect("init SplitRule failed");
+    let pcapng = cap.gen_pcapng(pbo).expect("generate pcapng header failed");
 
-    if count > 0 {
-        capture_local_by_count(&mut cap, path, count);
-    } else if file_size_str.len() > 0 {
-        let file_size = file_size_parser(file_size_str);
-        capture_local_by_filesize(&mut cap, path, file_size, file_count);
-    } else if rotate_str.len() > 0 {
-        let (rotate, rotate_format) = rotate_parser(rotate_str);
-        capture_local_by_rotate(&mut cap, path, rotate, file_count, rotate_format);
-    } else {
-        capture_local_by_none(&mut cap, path);
+    for block in pcapng.blocks {
+        // write all blocks
+        split_rule
+            .write(block.clone(), pbo)
+            .expect("write pcapng header failed");
+        match block {
+            GeneralBlock::SectionHeaderBlock(shb) => split_rule.update_shb(shb.clone()),
+            GeneralBlock::InterfaceDescriptionBlock(idb) => split_rule.update_idb(idb.clone()),
+            _ => (),
+        }
     }
 
-    quitting("local");
+    loop {
+        match cap.next_as_pcapng() {
+            Ok(block) => {
+                split_rule.write(block, pbo).expect("write block failed");
+                update_captured_stat();
+            }
+            Err(e) => warn!("{}", e),
+        }
+    }
 }
 
 #[cfg(feature = "libpcap")]
-pub fn capture_local(args: &Args) {
-    let pbo = PcapByteOrder::WiresharkDefault;
+pub fn capture_local(args: Args) {
     let filters = Filters::parser(&args.filter).expect("parser filter failed");
+    let pbo = PcapByteOrder::WiresharkDefault;
 
     let devices = Device::list().expect("can not get device from libpcap");
     let device = devices
@@ -255,12 +104,6 @@ pub fn capture_local(args: &Args) {
 
     debug!("open save file path");
 
-    let path = &args.write;
-    let count = args.count;
-    let file_size_str = &args.file_size;
-    let file_count = args.file_count;
-    let rotate_str = &args.rotate;
-
     let if_name = &device.name;
     let if_description = match &device.desc {
         Some(d) => d.clone(),
@@ -282,220 +125,47 @@ pub fn capture_local(args: &Args) {
         ips.push(ipn);
     }
     let mac = None;
-    let mut pcapng = PcapNg::new_raw(if_name, &if_description, &ips, mac);
 
-    if count > 0 {
-        // count split
-        let mut num_packet = 0;
-        loop {
-            if num_packet >= count {
-                break;
-            }
-            let packet = cap
-                .next_packet()
-                .expect("can not get next packet from libpcap");
-            let packet_data = packet.data;
-            match filters.as_ref() {
-                Some(fls) => {
-                    if fls.check(packet_data).expect("filter check failed") {
-                        let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                            .expect("create enhanced packet block failed");
-                        let block = GeneralBlock::EnhancedPacketBlock(eb);
-                        pcapng.append(block);
-                        update_captured_stat();
-                        num_packet += 1;
-                    }
-                }
-                None => {
-                    let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                        .expect("create enhanced packet block failed");
-                    let block = GeneralBlock::EnhancedPacketBlock(eb);
-                    pcapng.append(block);
-                    update_captured_stat();
-                    num_packet += 1;
-                }
-            }
-        }
-        pcapng
-            .write_all(path)
-            .expect(&format!("write pcapng to file [{}] failed", path));
-    } else if file_size_str.len() > 0 {
-        // file size split
-        let file_size = file_size_parser(file_size_str);
-        let mut i = 0;
+    let pcapng = PcapNg::new_raw(if_name, &if_description, &ips, mac);
+    let mut split_rule = SplitRule::init(&args).expect("init SplitRule failed");
 
-        fn get_next_i(i: usize, file_count: usize) -> usize {
-            if i < file_count - 1 { i + 1 } else { 0 }
-        }
-
-        // write the first header to file
-        let mut new_path = format!("{}.{}", i, path);
-        let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-        pcapng
-            .write(&mut fs)
-            .expect(&format!("write pcapng to {} failed", new_path));
-
-        loop {
-            let local_file_size = get_file_size(&new_path);
-            if local_file_size > file_size {
-                // change write to new file
-                i = if file_count > 0 {
-                    get_next_i(i, file_count)
-                } else {
-                    i + 1
-                };
-                new_path = format!("{}.{}", i, path);
-                fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-
-                pcapng
-                    .write(&mut fs)
-                    .expect(&format!("write pcapng to {} failed", new_path));
-            }
-
-            match cap.next_packet() {
-                Ok(packet) => {
-                    let packet_data = packet.data;
-                    match filters.as_ref() {
-                        Some(fls) => {
-                            if fls.check(packet_data).expect("filter check failed") {
-                                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                                    .expect("create enhanced packet block failed");
-                                let block = GeneralBlock::EnhancedPacketBlock(eb);
-                                block
-                                    .write(&mut fs, pbo)
-                                    .expect(&format!("write block to file [{}] failed", new_path));
-                                update_captured_stat();
-                            }
-                        }
-                        None => {
-                            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                                .expect("create enhanced packet block failed");
-                            let block = GeneralBlock::EnhancedPacketBlock(eb);
-                            block
-                                .write(&mut fs, pbo)
-                                .expect(&format!("write block to file [{}] failed", new_path));
-                            update_captured_stat();
-                        }
-                    }
-                }
-                Err(e) => warn!("{}", e),
-            }
-        }
-    } else if rotate_str.len() > 0 {
-        // rotate split
-        let (rotate, rotate_format) = rotate_parser(rotate_str);
-
-        let mut start_time = Instant::now();
-        let mut write_files = 0;
-
-        let pbo = PcapByteOrder::WiresharkDefault;
-        let now = Local::now();
-        let now_str = now.format(rotate_format);
-
-        // write the first header to file
-        let mut new_path = format!("{}.{}", now_str, path);
-        let mut fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-        pcapng
-            .write(&mut fs)
-            .expect(&format!("write pcapng to {} failed", new_path));
-
-        // work progress
-        let mut capture = |write_files: &mut usize| {
-            let duration = start_time.elapsed();
-            if duration.as_secs() >= rotate {
-                start_time += Duration::from_secs(rotate);
-                let now = Local::now();
-                let now_str = now.format(rotate_format);
-                new_path = format!("{}.{}", now_str, path);
-                fs = File::create(&new_path).expect(&format!("can not create file [{}]", new_path));
-                pcapng
-                    .write(&mut fs)
-                    .expect(&format!("write pcapng to {} failed", new_path));
-                *write_files += 1;
-            }
-
-            match cap.next_packet() {
-                Ok(packet) => {
-                    let packet_data = packet.data;
-                    match filters.as_ref() {
-                        Some(fls) => {
-                            if fls.check(packet_data).expect("filter check failed") {
-                                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                                    .expect("create enhanced packet block failed");
-                                let block = GeneralBlock::EnhancedPacketBlock(eb);
-                                block
-                                    .write(&mut fs, pbo)
-                                    .expect(&format!("write block to file [{}] failed", new_path));
-                                update_captured_stat();
-                            }
-                        }
-                        None => {
-                            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                                .expect("create enhanced packet block failed");
-                            let block = GeneralBlock::EnhancedPacketBlock(eb);
-                            block
-                                .write(&mut fs, pbo)
-                                .expect(&format!("write block to file [{}] failed", new_path));
-                            update_captured_stat();
-                        }
-                    }
-                }
-                Err(e) => warn!("{}", e),
-            }
-        };
-
-        if file_count > 0 {
-            // Used  in conjunction with the -G option,
-            // this will limit the number of rotated dump files that get created,
-            // exiting with status 0 when reaching the limit.
-            loop {
-                capture(&mut write_files);
-                if write_files > file_count {
-                    break;
-                }
-            }
-        } else {
-            loop {
-                capture(&mut write_files);
-            }
-        }
-    } else {
-        let mut fs = File::create(&path).expect(&format!("can not create file [{}]", path));
-        pcapng
-            .write(&mut fs)
-            .expect(&format!("write pcapng to {} failed", path));
-
-        loop {
-            match cap.next_packet() {
-                Ok(packet) => {
-                    let packet_data = packet.data;
-                    match filters.as_ref() {
-                        Some(fls) => {
-                            if fls.check(packet_data).expect("filter check failed") {
-                                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                                    .expect("create enhanced packet block failed");
-                                let block = GeneralBlock::EnhancedPacketBlock(eb);
-                                block
-                                    .write(&mut fs, pbo)
-                                    .expect(&format!("write block to file [{}] failed", path));
-                                update_captured_stat();
-                            }
-                        }
-                        None => {
-                            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                                .expect("create enhanced packet block failed");
-                            let block = GeneralBlock::EnhancedPacketBlock(eb);
-                            block
-                                .write(&mut fs, pbo)
-                                .expect(&format!("write block to file [{}] failed", path));
-                            update_captured_stat();
-                        }
-                    }
-                }
-                Err(e) => warn!("{}", e),
-            }
+    for block in pcapng.blocks {
+        // write all blocks
+        split_rule
+            .write(block.clone(), pbo)
+            .expect("write pcapng header failed");
+        match block {
+            GeneralBlock::SectionHeaderBlock(shb) => split_rule.update_shb(shb.clone()),
+            GeneralBlock::InterfaceDescriptionBlock(idb) => split_rule.update_idb(idb.clone()),
+            _ => (),
         }
     }
 
-    quitting("local");
+    loop {
+        let packet = cap
+            .next_packet()
+            .expect("can not get next packet from libpcap");
+
+        let packet_data = packet.data;
+        match &filters {
+            Some(fls) => {
+                if fls.check(packet_data).expect("filter check failed") {
+                    let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                        .expect("create enhanced packet block failed");
+                    let block = GeneralBlock::EnhancedPacketBlock(eb);
+                    split_rule.write(block, pbo).expect("write block failed");
+                    update_captured_stat();
+                } else {
+                    warn!("fls check failed")
+                }
+            }
+            None => {
+                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
+                    .expect("create enhanced packet block failed");
+                let block = GeneralBlock::EnhancedPacketBlock(eb);
+                split_rule.write(block, pbo).expect("write block failed");
+                update_captured_stat();
+            }
+        }
+    }
 }

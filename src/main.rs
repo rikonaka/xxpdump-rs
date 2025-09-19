@@ -1,6 +1,5 @@
 use bincode::Decode;
 use bincode::Encode;
-use chrono::Local;
 use clap::Parser;
 #[cfg(feature = "libpcap")]
 use pcap::Device;
@@ -16,10 +15,10 @@ use prettytable::Table;
 use prettytable::row;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fs;
 use std::iter::zip;
 #[cfg(feature = "libpcap")]
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use tracing::Level;
@@ -30,11 +29,14 @@ use tracing_subscriber::FmtSubscriber;
 mod client;
 mod local;
 mod server;
-mod writer;
+mod split;
 
 use client::capture_remote_client;
 use local::capture_local;
 use server::capture_remote_server;
+
+static PACKETS_SERVER_TOTAL_RECVED: LazyLock<Arc<Mutex<usize>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(0)));
 
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
@@ -44,7 +46,7 @@ const DEFAULT_BUFFER_SIZE: usize = 65535;
 const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 
 /// Next generation packet dump software.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author = "RikoNaka", version, about, long_about = None)]
 struct Args {
     /// The interface to capture, by default, this is 'any' which means pseudo-device that captures on all interfaces
@@ -144,7 +146,6 @@ enum PcapNgType {
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 struct PcapNgTransport {
     pub p_type: PcapNgType,
-    pub p_uuid: String,
     pub p_data: Vec<u8>,
 }
 
@@ -159,9 +160,9 @@ fn update_captured_stat() {
 }
 
 fn update_server_recved_stat() {
-    let mut p = match PACKETS_SERVER_RECVED.lock() {
+    let mut p = match PACKETS_SERVER_TOTAL_RECVED.lock() {
         Ok(p) => p,
-        Err(e) => panic!("update PACKETS_SERVER_RECVED failed: {}", e),
+        Err(e) => panic!("update PACKETS_SERVER_TOTAL_RECVED failed: {}", e),
     };
     *p += 1;
 }
@@ -292,11 +293,11 @@ fn quitting(mode: &str) {
             info!("packets captured [{}]", packets_captured);
         }
         "server" => {
-            let packets_server_recved: usize = match PACKETS_SERVER_RECVED.lock() {
+            let total_recved: usize = match PACKETS_SERVER_TOTAL_RECVED.lock() {
                 Ok(p) => *p,
-                Err(e) => panic!("try to lock the PACKETS_SERVER_RECVED failed: {}", e),
+                Err(e) => panic!("try to lock the PACKETS_SERVER_TOTAL_RECVED failed: {}", e),
             };
-            info!("packets server recved [{}]", packets_server_recved);
+            info!("packets server recved [{}]", total_recved);
         }
         _ => (),
     }
@@ -305,7 +306,7 @@ fn quitting(mode: &str) {
 }
 
 /// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
-fn file_size_parser(file_size: &str) -> usize {
+fn file_size_parser(file_size: &str) -> u64 {
     if file_size.len() > 0 {
         let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
         let mut ind = 0;
@@ -319,7 +320,7 @@ fn file_size_parser(file_size: &str) -> usize {
         let (num, unit) = if ind > 0 && ind <= file_size.len() {
             let num_str = &file_size[..ind];
             let unit = &file_size[ind..];
-            let num: usize = match num_str.parse() {
+            let num: u64 = match num_str.parse() {
                 Ok(n) => n,
                 Err(_) => panic!("wrong file size parameter [{file_size}]"),
             };
@@ -358,7 +359,7 @@ const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
 const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
 
 /// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
-fn rotate_parser(rotate: &str) -> (usize, &str) {
+fn rotate_parser(rotate: &str) -> (u64, &str) {
     if rotate.len() > 0 {
         let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
         let mut ind = 0;
@@ -372,7 +373,7 @@ fn rotate_parser(rotate: &str) -> (usize, &str) {
         let (num, unit) = if ind > 0 && ind <= rotate.len() {
             let num_str = &rotate[..ind];
             let unit = &rotate[ind..];
-            let num: usize = match num_str.parse() {
+            let num: u64 = match num_str.parse() {
                 Ok(n) => n,
                 Err(_) => panic!("wrong file size parameter [{rotate}]"),
             };
@@ -404,19 +405,6 @@ fn rotate_parser(rotate: &str) -> (usize, &str) {
         (final_rotate, format_str)
     } else {
         (0, ROTATE_SEC_FORMAT)
-    }
-}
-
-fn get_file_size(target_file: &str) -> u64 {
-    match fs::metadata(target_file) {
-        Ok(m) => {
-            if m.is_file() {
-                m.len()
-            } else {
-                panic!("save file path [{}] is not file", target_file);
-            }
-        }
-        Err(_) => 0, // file not exists, ignore the error
     }
 }
 
@@ -475,14 +463,14 @@ async fn main() {
 
     info!("working...");
     match args.mode.as_str() {
-        "local" => capture_local(&args),
+        "local" => capture_local(args),
         "client" => {
-            capture_remote_client(&args)
+            capture_remote_client(args)
                 .await
                 .expect("capture remote client error");
         }
         "server" => {
-            capture_remote_server(&args)
+            capture_remote_server(args)
                 .await
                 .expect("capture remote server error");
         }
@@ -499,7 +487,7 @@ mod test {
         let args = Args::parse_from(itr);
         println!("{}", args.mode);
         println!("{}", args.rotate);
-        capture_remote_server(&args)
+        capture_remote_server(args)
             .await
             .expect("capture remote server error");
     }

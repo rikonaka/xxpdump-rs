@@ -1,19 +1,18 @@
 use anyhow::Result;
 use bincode::config;
+use bincode::config::Configuration;
 use pcapture::PcapByteOrder;
 use pcapture::pcapng::EnhancedPacketBlock;
+use pcapture::pcapng::GeneralBlock;
 use pcapture::pcapng::InterfaceDescriptionBlock;
 use pcapture::pcapng::InterfaceStatisticsBlock;
 use pcapture::pcapng::NameResolutionBlock;
 use pcapture::pcapng::SectionHeaderBlock;
 use pcapture::pcapng::SimplePacketBlock;
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::thread::sleep;
-use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -22,14 +21,12 @@ use tracing::error;
 use tracing::info;
 
 use crate::Args;
+use crate::PACKETS_SERVER_TOTAL_RECVED;
 use crate::PcapNgTransport;
 use crate::PcapNgType;
+use crate::split::SplitRule;
+use crate::update_captured_stat;
 use crate::update_server_recved_stat;
-use crate::writer::SplitRule;
-use crate::writer::Writer;
-
-static PACKETS_SERVER_TOTAL_RECVED: LazyLock<Arc<Mutex<usize>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(0)));
 
 fn get_server_total_recved() -> usize {
     let packets_server_recved = match PACKETS_SERVER_TOTAL_RECVED.lock() {
@@ -59,64 +56,70 @@ impl ServerPipe {
             Err(e) => panic!("try to lock the SERVER_PIPE failed: {}", e),
         }
     }
-    fn start(&self, args: &Args) -> Result<()> {
-        let config = config::standard();
-        let pbo = PcapByteOrder::WiresharkDefault;
-        let mut shb_headers = HashMap::new();
-        let mut idb_headers = HashMap::new();
-        let split_rule = SplitRule::init(args)?;
+    fn start(&self, args: &Args, config: Configuration, pbo: PcapByteOrder) {
+        let mut split_rule = SplitRule::init(args).expect("init SplitRule failed");
 
         loop {
             match Self::pop() {
                 Some(pcapng_t) => {
-                    let client_uuid = pcapng_t.p_uuid;
-                    match fs {
-                        Some(fs) => match pcapng_t.p_type {
-                            PcapNgType::SectionHeaderBlock => {
-                                let decode: (SectionHeaderBlock, usize) =
-                                    bincode::decode_from_slice(&pcapng_t.p_data, config)?;
-                                let (shb, _) = decode;
-                                shb.write(fs, pbo)?;
-                                shb_headers.insert(client_uuid, shb);
-                            }
-                            PcapNgType::InterfaceDescriptionBlock => {
-                                let decode: (InterfaceDescriptionBlock, usize) =
-                                    bincode::decode_from_slice(&pcapng_t.p_data, config)?;
-                                let (idb, _) = decode;
-                                idb.write(fs, pbo)?;
-                                idb_headers.insert(client_uuid, idb);
-                            }
-                            PcapNgType::EnhancedPacketBlock => {
-                                let decode: (EnhancedPacketBlock, usize) =
-                                    bincode::decode_from_slice(&pcapng_t.p_data, config)?;
-                                let (epb, _) = decode;
-                                epb.write(fs, pbo)?;
-                            }
-                            PcapNgType::SimplePacketBlock => {
-                                let decode: (SimplePacketBlock, usize) =
-                                    bincode::decode_from_slice(&pcapng_t.p_data, config)?;
-                                let (spb, _) = decode;
-                                spb.write(fs, pbo)?;
-                            }
-                            PcapNgType::InterfaceStatisticsBlock => {
-                                let decode: (InterfaceStatisticsBlock, usize) =
-                                    bincode::decode_from_slice(&pcapng_t.p_data, config)?;
-                                let (isb, _) = decode;
-                                isb.write(fs, pbo)?;
-                            }
-                            PcapNgType::NameResolutionBlock => {
-                                let decode: (NameResolutionBlock, usize) =
-                                    bincode::decode_from_slice(&pcapng_t.p_data, config)?;
-                                let (nrb, _) = decode;
-                                nrb.write(fs, pbo)?;
-                            }
-                        },
-                        None => (),
+                    update_captured_stat();
+                    match pcapng_t.p_type {
+                        PcapNgType::SectionHeaderBlock => {
+                            let decode: (SectionHeaderBlock, usize) =
+                                bincode::decode_from_slice(&pcapng_t.p_data, config)
+                                    .expect("decode shb failed");
+                            let (shb, _) = decode;
+                            split_rule.update_shb(shb.clone());
+
+                            let block = GeneralBlock::SectionHeaderBlock(shb);
+                            split_rule.write(block, pbo).expect("write shb failed");
+                        }
+                        PcapNgType::InterfaceDescriptionBlock => {
+                            let decode: (InterfaceDescriptionBlock, usize) =
+                                bincode::decode_from_slice(&pcapng_t.p_data, config)
+                                    .expect("decode idb failed");
+                            let (idb, _) = decode;
+                            split_rule.update_idb(idb.clone());
+
+                            let block = GeneralBlock::InterfaceDescriptionBlock(idb);
+                            split_rule.write(block, pbo).expect("write idb failed");
+                        }
+                        PcapNgType::EnhancedPacketBlock => {
+                            let decode: (EnhancedPacketBlock, usize) =
+                                bincode::decode_from_slice(&pcapng_t.p_data, config)
+                                    .expect("decode epb failed");
+                            let (epb, _) = decode;
+                            let block = GeneralBlock::EnhancedPacketBlock(epb);
+                            split_rule.write(block, pbo).expect("write epb failed");
+                        }
+                        PcapNgType::SimplePacketBlock => {
+                            let decode: (SimplePacketBlock, usize) =
+                                bincode::decode_from_slice(&pcapng_t.p_data, config)
+                                    .expect("decode spb failed");
+                            let (spb, _) = decode;
+                            let block = GeneralBlock::SimplePacketBlock(spb);
+                            split_rule.write(block, pbo).expect("write spb failed");
+                        }
+                        PcapNgType::InterfaceStatisticsBlock => {
+                            let decode: (InterfaceStatisticsBlock, usize) =
+                                bincode::decode_from_slice(&pcapng_t.p_data, config)
+                                    .expect("decode isb failed");
+                            let (isb, _) = decode;
+                            let block = GeneralBlock::InterfaceStatisticsBlock(isb);
+                            split_rule.write(block, pbo).expect("write isb failed");
+                        }
+                        PcapNgType::NameResolutionBlock => {
+                            let decode: (NameResolutionBlock, usize) =
+                                bincode::decode_from_slice(&pcapng_t.p_data, config)
+                                    .expect("decode nrb failed");
+                            let (nrb, _) = decode;
+                            let block = GeneralBlock::NameResolutionBlock(nrb);
+                            split_rule.write(block, pbo).expect("write irb failed");
+                        }
                     }
                 }
                 None => (),
             }
-            // sleep(Duration::from_secs_f32(1.0));
         }
     }
 }
@@ -200,32 +203,26 @@ impl Server {
     }
 }
 
-pub async fn capture_remote_server(args: &Args) -> Result<()> {
+pub async fn capture_remote_server(args: Args) -> Result<()> {
     info!("listening at {}", args.server_addr);
-    let pbo = PcapByteOrder::WiresharkDefault; // default
-    let config = config::standard();
-    let split_rule = SplitRule::new(args, pbo, config);
-    let server_pip = ServerPipe { split_rule };
+    let server_pip = ServerPipe;
     let mut server = Server::init(&args.server_addr, &args.server_passwd).await?;
-    tokio::spawn(async move { server_pip.start() });
+
+    let config = config::standard();
+    let pbo = PcapByteOrder::WiresharkDefault;
+    tokio::spawn(async move { server_pip.start(&args, config, pbo) });
+
     match server.run().await {
         Ok(_) => (),
         Err(e) => error!("server run failed: {}", e),
     }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod test {
     use std::fs::File;
-    use uuid::Uuid;
-    #[test]
-    fn uuid_gen() {
-        let uuid = Uuid::new_v4();
-        // aa3293ec-5cec-4984-aa19-56d462bdc0eb
-        // dc5b475b-5e68-4401-b824-d27d90f45755
-        println!("{}", uuid);
-    }
     #[test]
     fn empty_file() {
         let _ = File::create("test.bin").unwrap();
