@@ -54,16 +54,16 @@ struct Args {
     interface: String,
 
     /// Exit after receiving 'count' packets
-    #[arg(short = 'c', long, default_value_t = 0)]
-    count: usize,
+    #[arg(short = 'c', long)]
+    count: Option<usize>,
 
     /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
-    #[arg(short = 'C', long, default_value = "")]
-    file_size: String, // 1MB, 1KB, 1GB .etc
+    #[arg(short = 'C', long)]
+    file_size: Option<String>, // 1MB, 1KB, 1GB .etc
 
     /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
-    #[arg(short = 'r', long, default_value = "")]
-    rotate: String, // 1S, 1M, 1D .etc
+    #[arg(short = 'r', long)]
+    rotate: Option<String>, // 1S, 1M, 1D .etc
 
     /// Set promiscuous mode on or off
     #[arg(short = 'p', long, action, default_value_t = true)]
@@ -86,8 +86,8 @@ struct Args {
     timeout: f32,
 
     /// Set the filter when saving the packet, e.g. --filter ip=192.168.1.1 and port=80, please use --filter-examples to show more examples
-    #[arg(short = 'f', long, default_value = "")]
-    filter: String,
+    #[arg(short = 'f', long)]
+    filter: Option<String>,
 
     /// Show the filter parameter more examples
     #[arg(long, alias = "fe", action, default_value_t = false)]
@@ -305,109 +305,6 @@ fn quitting(mode: &str) {
     std::process::exit(0);
 }
 
-/// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
-fn file_size_parser(file_size: &str) -> u64 {
-    if file_size.len() > 0 {
-        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-        let mut ind = 0;
-        for ch in file_size.chars() {
-            if !nums_vec.contains(&ch) {
-                break;
-            }
-            ind += 1;
-        }
-
-        let (num, unit) = if ind > 0 && ind <= file_size.len() {
-            let num_str = &file_size[..ind];
-            let unit = &file_size[ind..];
-            let num: u64 = match num_str.parse() {
-                Ok(n) => n,
-                Err(_) => panic!("wrong file size parameter [{file_size}]"),
-            };
-            (num, unit)
-        } else {
-            panic!("wrong file size parameter [{}]", file_size);
-        };
-
-        let final_file_size = if unit.len() == 0 {
-            // no unit, by default, it bytes
-            num
-        } else {
-            let unit_fix = unit.trim();
-            if unit_fix.starts_with("B") || unit_fix.starts_with("b") {
-                num
-            } else if unit_fix.starts_with("K") || unit_fix.starts_with("k") {
-                num * 1024
-            } else if unit_fix.starts_with("G") || unit_fix.starts_with("g") {
-                num * 1024 * 1024
-            } else if unit_fix.starts_with("P") || unit_fix.starts_with("p") {
-                num * 1024 * 1024 * 1024
-            } else {
-                panic!("wrong unit [{}]", unit);
-            }
-        };
-        debug!("finial file size [{}] bytes", final_file_size);
-        final_file_size
-    } else {
-        0
-    }
-}
-
-const ROTATE_SEC_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
-const ROTATE_MIN_FORMAT: &str = "%Y_%m_%d_%H_%M";
-const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
-const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
-
-/// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
-fn rotate_parser(rotate: &str) -> (u64, &str) {
-    if rotate.len() > 0 {
-        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-        let mut ind = 0;
-        for ch in rotate.chars() {
-            if !nums_vec.contains(&ch) {
-                break;
-            }
-            ind += 1;
-        }
-
-        let (num, unit) = if ind > 0 && ind <= rotate.len() {
-            let num_str = &rotate[..ind];
-            let unit = &rotate[ind..];
-            let num: u64 = match num_str.parse() {
-                Ok(n) => n,
-                Err(_) => panic!("wrong file size parameter [{rotate}]"),
-            };
-            (num, unit)
-        } else {
-            panic!("wrong file size parameter [{}]", rotate);
-        };
-
-        let (final_rotate, format_str) = if unit.len() == 0 {
-            // no unit, by default, it bytes
-            (num, ROTATE_SEC_FORMAT)
-        } else {
-            let unit_fix = unit.trim();
-            if unit_fix.starts_with("S") || unit_fix.starts_with("s") {
-                (num, ROTATE_SEC_FORMAT)
-            } else if unit_fix.starts_with("M") || unit_fix.starts_with("m") {
-                (num * 60, ROTATE_MIN_FORMAT)
-            } else if unit_fix.starts_with("H") || unit_fix.starts_with("h") {
-                (num * 60 * 60, ROTATE_HOUR_FORMAT)
-            } else if unit_fix.starts_with("D") || unit_fix.starts_with("d") {
-                (num * 60 * 60 * 24, ROTATE_DAY_FORMAT)
-            } else if unit_fix.starts_with("W") || unit_fix.starts_with("w") {
-                (num * 60 * 60 * 24 * 7, ROTATE_DAY_FORMAT)
-            } else {
-                panic!("wrong unit [{}]", unit);
-            }
-        };
-        debug!("finial rotate [{}] secs", final_rotate);
-        (final_rotate, format_str)
-    } else {
-        (0, ROTATE_SEC_FORMAT)
-    }
-}
-
 fn print_filter_examples() {
     let examples = vec![
         "ip=192.168.1.1 and !tcp",
@@ -486,7 +383,7 @@ mod test {
         let itr = vec!["", "--mode", "server", "--rotate", "20s"];
         let args = Args::parse_from(itr);
         println!("{}", args.mode);
-        println!("{}", args.rotate);
+        println!("{:?}", args.rotate);
         capture_remote_server(args)
             .await
             .expect("capture remote server error");

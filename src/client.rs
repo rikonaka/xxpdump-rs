@@ -128,8 +128,7 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         String::new()
     };
 
-    let iface = &args.interface;
-    let mut cap = match Capture::new(&iface, Some(&filter)) {
+    let mut cap = match Capture::new(&args.interface, Some(filter)) {
         Ok(c) => c,
         Err(e) => panic!("init the Capture failed: {}", e),
     };

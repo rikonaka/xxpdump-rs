@@ -30,9 +30,7 @@ use crate::update_captured_stat;
 #[cfg(feature = "libpnet")]
 pub fn capture_local(args: Args) {
     let pbo = PcapByteOrder::WiresharkDefault;
-    let filter = &args.filter;
-    let iface = &args.interface;
-    let mut cap = match Capture::new(&iface, Some(&filter)) {
+    let mut cap = match Capture::new(&args.interface, args.filter.clone()) {
         Ok(c) => c,
         Err(e) => panic!("init the Capture failed: {}", e),
     };
@@ -167,5 +165,18 @@ pub fn capture_local(args: Args) {
                 update_captured_stat();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use clap::Parser;
+    #[test]
+    fn server_run() {
+        let itr = vec!["", "--count", "10"];
+        let args = Args::parse_from(itr);
+        println!("{:?}", args.count);
+        capture_local(args);
     }
 }

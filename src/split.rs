@@ -6,10 +6,114 @@ use pcapture::pcapng::GeneralBlock;
 use pcapture::pcapng::InterfaceDescriptionBlock;
 use pcapture::pcapng::SectionHeaderBlock;
 use std::fs::File;
+use tracing::debug;
 
 use crate::Args;
-use crate::file_size_parser;
-use crate::rotate_parser;
+
+/// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
+fn filesize_parser(file_size: &str) -> u64 {
+    if file_size.len() > 0 {
+        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+        let mut ind = 0;
+        for ch in file_size.chars() {
+            if !nums_vec.contains(&ch) {
+                break;
+            }
+            ind += 1;
+        }
+
+        let (num, unit) = if ind > 0 && ind <= file_size.len() {
+            let num_str = &file_size[..ind];
+            let unit = &file_size[ind..];
+            let num: u64 = match num_str.parse() {
+                Ok(n) => n,
+                Err(_) => panic!("wrong file size parameter [{file_size}]"),
+            };
+            (num, unit)
+        } else {
+            panic!("wrong file size parameter [{}]", file_size);
+        };
+
+        let final_file_size = if unit.len() == 0 {
+            // no unit, by default, it bytes
+            num
+        } else {
+            let unit_fix = unit.trim();
+            if unit_fix.starts_with("B") || unit_fix.starts_with("b") {
+                num
+            } else if unit_fix.starts_with("K") || unit_fix.starts_with("k") {
+                num * 1024
+            } else if unit_fix.starts_with("M") || unit_fix.starts_with("m") {
+                num * 1024 * 1024
+            } else if unit_fix.starts_with("G") || unit_fix.starts_with("g") {
+                num * 1024 * 1024 * 1024
+            } else if unit_fix.starts_with("P") || unit_fix.starts_with("p") {
+                num * 1024 * 1024 * 1024 * 1024
+            } else {
+                panic!("wrong unit [{}]", unit);
+            }
+        };
+        debug!("finial file size [{}] bytes", final_file_size);
+        final_file_size
+    } else {
+        0
+    }
+}
+
+const ROTATE_SEC_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
+const ROTATE_MIN_FORMAT: &str = "%Y_%m_%d_%H_%M";
+const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
+const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
+
+/// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
+fn rotate_parser(rotate: &str) -> (u64, &str) {
+    if rotate.len() > 0 {
+        let nums_vec = vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+        let mut ind = 0;
+        for ch in rotate.chars() {
+            if !nums_vec.contains(&ch) {
+                break;
+            }
+            ind += 1;
+        }
+
+        let (num, unit) = if ind > 0 && ind <= rotate.len() {
+            let num_str = &rotate[..ind];
+            let unit = &rotate[ind..];
+            let num: u64 = match num_str.parse() {
+                Ok(n) => n,
+                Err(_) => panic!("wrong file size parameter [{rotate}]"),
+            };
+            (num, unit)
+        } else {
+            panic!("wrong file size parameter [{}]", rotate);
+        };
+
+        let (final_rotate, format_str) = if unit.len() == 0 {
+            // no unit, by default, it bytes
+            (num, ROTATE_SEC_FORMAT)
+        } else {
+            let unit_fix = unit.trim();
+            if unit_fix.starts_with("S") || unit_fix.starts_with("s") {
+                (num, ROTATE_SEC_FORMAT)
+            } else if unit_fix.starts_with("M") || unit_fix.starts_with("m") {
+                (num * 60, ROTATE_MIN_FORMAT)
+            } else if unit_fix.starts_with("H") || unit_fix.starts_with("h") {
+                (num * 60 * 60, ROTATE_HOUR_FORMAT)
+            } else if unit_fix.starts_with("D") || unit_fix.starts_with("d") {
+                (num * 60 * 60 * 24, ROTATE_DAY_FORMAT)
+            } else if unit_fix.starts_with("W") || unit_fix.starts_with("w") {
+                (num * 60 * 60 * 24 * 7, ROTATE_DAY_FORMAT)
+            } else {
+                panic!("wrong unit [{}]", unit);
+            }
+        };
+        debug!("finial rotate [{}] secs", final_rotate);
+        (final_rotate, format_str)
+    } else {
+        (0, ROTATE_SEC_FORMAT)
+    }
+}
 
 #[derive(Debug)]
 pub struct SplitRuleNone {
@@ -39,27 +143,33 @@ pub struct SplitRuleRotate {
 impl SplitRuleRotate {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         let now = Local::now();
+        match block {
+            GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
+                if now.timestamp() as u64
+                    >= self.current_rotate.timestamp() as u64 + self.threshold_rotate
+                {
+                    self.current_prefix = now.format(&self.prefix_format).to_string();
+                    let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
+                    let mut fs = File::create(write_path)?;
 
-        if now.timestamp() as u64 >= self.current_rotate.timestamp() as u64 + self.threshold_rotate
-        {
-            self.current_prefix = now.format(&self.prefix_format).to_string();
-            let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
-            let mut fs = File::create(write_path)?;
+                    if let Some(shb) = &self.shb {
+                        shb.write(&mut fs, pbo)?;
+                    } else {
+                        panic!("shb not found");
+                    }
+                    if let Some(idbs) = &self.idbs {
+                        for idb in idbs {
+                            idb.write(&mut fs, pbo)?;
+                        }
+                    } else {
+                        panic!("idb not found");
+                    }
 
-            if let Some(shb) = &self.shb {
-                shb.write(&mut fs, pbo)?;
-            } else {
-                panic!("shb not found");
-            }
-            if let Some(idbs) = &self.idbs {
-                for idb in idbs {
-                    idb.write(&mut fs, pbo)?;
+                    self.write_fs = fs;
+                    self.current_rotate = now
                 }
-            } else {
-                panic!("idb not found");
             }
-
-            self.write_fs = fs;
+            _ => (),
         }
 
         block.write(&mut self.write_fs, pbo)?;
@@ -82,34 +192,38 @@ pub struct SplitRuleFileSize {
 
 impl SplitRuleFileSize {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
-        self.current_file_size += block.size() as u64;
+        match block {
+            GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
+                if self.current_file_size >= self.threshold_file_size {
+                    self.current_prefix += 1;
+                    if self.file_count > 0 && self.current_prefix >= self.file_count {
+                        self.current_prefix = 0;
+                    }
+                    let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
+                    let mut fs = File::create(write_path)?;
 
-        if self.current_file_size >= self.threshold_file_size {
-            self.current_prefix += 1;
-            if self.file_count > 0 && self.current_prefix >= self.file_count {
-                self.current_prefix = 0;
-            }
-            let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
-            let mut fs = File::create(write_path)?;
+                    if let Some(shb) = &self.shb {
+                        shb.write(&mut fs, pbo)?;
+                    } else {
+                        panic!("shb not found");
+                    }
+                    if let Some(idbs) = &self.idbs {
+                        for idb in idbs {
+                            idb.write(&mut fs, pbo)?;
+                        }
+                    } else {
+                        panic!("idb not found");
+                    }
 
-            if let Some(shb) = &self.shb {
-                shb.write(&mut fs, pbo)?;
-            } else {
-                panic!("shb not found");
-            }
-            if let Some(idbs) = &self.idbs {
-                for idb in idbs {
-                    idb.write(&mut fs, pbo)?;
+                    self.current_file_size = 0;
+                    self.write_fs = fs;
                 }
-            } else {
-                panic!("idb not found");
             }
-
-            self.current_file_size = block.size() as u64;
-            self.write_fs = fs;
+            _ => (),
         }
 
         block.write(&mut self.write_fs, pbo)?;
+        self.current_file_size += block.size() as u64;
         Ok(())
     }
 }
@@ -129,18 +243,14 @@ pub struct SplieRuleCount {
 
 impl SplieRuleCount {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
-        self.current_num_packet += 1;
-        println!(
-            "current: {}, prefix: {}, file_count: {}",
-            self.current_num_packet, self.current_prefix, self.file_count
-        );
-
-        if self.current_num_packet > self.threshold_num_packet {
+        if self.current_num_packet >= self.threshold_num_packet {
+            // panic!("stop");
             self.current_prefix += 1;
             if self.file_count > 0 && self.current_prefix >= self.file_count {
                 self.current_prefix = 0;
             }
             let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
+            println!("write_path: {}", write_path);
             let mut fs = File::create(write_path)?;
 
             if let Some(shb) = &self.shb {
@@ -156,11 +266,25 @@ impl SplieRuleCount {
                 panic!("idb not found");
             }
 
-            self.current_num_packet = 1;
+            self.current_num_packet = 0;
             self.write_fs = fs;
         }
 
         block.write(&mut self.write_fs, pbo)?;
+        // debug use
+        // match block {
+        //     GeneralBlock::EnhancedPacketBlock(_) => println!("EPB"),
+        //     GeneralBlock::InterfaceDescriptionBlock(_) => println!("IDB"),
+        //     GeneralBlock::InterfaceStatisticsBlock(_) => println!("ISB"),
+        //     GeneralBlock::NameResolutionBlock(_) => println!("NRB"),
+        //     GeneralBlock::SectionHeaderBlock(_) => println!("SHB"),
+        //     GeneralBlock::SimplePacketBlock(_) => println!("SPB"),
+        // }
+        match block {
+            GeneralBlock::EnhancedPacketBlock(_) => self.current_num_packet += 1,
+            GeneralBlock::SimplePacketBlock(_) => self.current_num_packet += 1,
+            _ => (),
+        }
         Ok(())
     }
 }
@@ -182,7 +306,7 @@ impl SplitRule {
         let file_size_str = &args.file_size;
         let rotate_str = &args.rotate;
 
-        if count > 0 {
+        if let Some(count) = count {
             let write_path = format!("0.{}", path);
             let write_fs = File::create(&write_path)?;
             let src = SplieRuleCount {
@@ -192,14 +316,14 @@ impl SplitRule {
                 current_num_packet: 0,
                 origin_path: path.clone(),
                 write_fs,
-                current_prefix: 1,
+                current_prefix: 0,
                 file_count,
             };
             Ok(SplitRule::Count(src))
-        } else if file_size_str.len() > 0 {
+        } else if let Some(file_size_str) = file_size_str {
             let write_path = format!("0.{}", path);
             let write_fs = File::create(&write_path)?;
-            let file_size = file_size_parser(file_size_str);
+            let file_size = filesize_parser(file_size_str);
             let spfs = SplitRuleFileSize {
                 shb: None,
                 idbs: None,
@@ -211,7 +335,7 @@ impl SplitRule {
                 file_count,
             };
             Ok(SplitRule::FileSize(spfs))
-        } else if rotate_str.len() > 0 {
+        } else if let Some(rotate_str) = rotate_str {
             let current_rotate = Local::now();
             let (rotate, rotate_format) = rotate_parser(rotate_str);
             let current_rotate_str = current_rotate.format(rotate_format).to_string();
@@ -222,7 +346,7 @@ impl SplitRule {
                 idbs: None,
                 threshold_rotate: rotate,
                 current_rotate,
-                origin_path: write_path,
+                origin_path: path.clone(),
                 write_fs,
                 prefix_format: rotate_format.to_string(),
                 current_prefix: current_rotate_str,
