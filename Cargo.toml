@@ -30,6 +30,6 @@ codegen-units = 1
 lto = true
 
 [features]
-default = ["libpnet"]
+default = ["libpcap"]
 libpnet = []
 libpcap = ["pcap"]

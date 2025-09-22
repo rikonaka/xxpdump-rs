@@ -11,8 +11,6 @@ use pcapture::PcapByteOrder;
 use pcapture::filter::Filters;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::EnhancedPacketBlock;
-#[cfg(feature = "libpcap")]
-use pcapture::pcapng::GeneralBlock;
 use pcapture::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::PcapNg;
@@ -69,9 +67,12 @@ pub fn capture_local(args: Args) {
 
 #[cfg(feature = "libpcap")]
 pub fn capture_local(args: Args) {
-    let filters = Filters::parser(&args.filter).expect("parser filter failed");
-    let pbo = PcapByteOrder::WiresharkDefault;
+    let filters = match &args.filter {
+        Some(filter) => Filters::parser(filter).expect("parser filter failed"),
+        None => None,
+    };
 
+    let pbo = PcapByteOrder::WiresharkDefault;
     let devices = Device::list().expect("can not get device from libpcap");
     let device = devices
         .iter()
@@ -140,9 +141,13 @@ pub fn capture_local(args: Args) {
     }
 
     loop {
-        let packet = cap
-            .next_packet()
-            .expect("can not get next packet from libpcap");
+        let packet = match cap.next_packet() {
+            Ok(p) => p,
+            Err(e) => match e {
+                pcap::Error::TimeoutExpired => continue,
+                _ => panic!("get next packet failed: {}", e),
+            },
+        };
 
         let packet_data = packet.data;
         match &filters {

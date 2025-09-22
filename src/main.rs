@@ -50,7 +50,7 @@ const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 #[command(author = "RikoNaka", version, about, long_about = None)]
 struct Args {
     /// The interface to capture, by default, this is 'any' which means pseudo-device that captures on all interfaces
-    #[arg(short = 'i', long, default_value = "any")]
+    #[arg(short = 'i', long)]
     interface: String,
 
     /// Exit after receiving 'count' packets

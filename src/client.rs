@@ -184,7 +184,10 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
     let config = bincode::config::standard();
     let mut client = Client::connect(&args.server_addr).await?;
 
-    let filters = Filters::parser(&args.filter).expect("parser filter failed");
+    let filters = match &args.filter {
+        Some(filter) => Filters::parser(filter).expect("parser filter failed"),
+        None => None,
+    };
 
     if client.auth(&args.server_passwd).await? {
         let if_name = &device.name;
