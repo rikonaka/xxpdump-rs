@@ -142,12 +142,11 @@ pub struct SplitRuleRotate {
 
 impl SplitRuleRotate {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
-        let now = Local::now();
         match block {
             GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
-                if now.timestamp() as u64
-                    >= self.current_rotate.timestamp() as u64 + self.threshold_rotate
-                {
+                let now = Local::now();
+                let elapsed = now.timestamp() - self.current_rotate.timestamp();
+                if elapsed as u64 >= self.threshold_rotate {
                     self.current_prefix = now.format(&self.prefix_format).to_string();
                     let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
                     let mut fs = File::create(write_path)?;
@@ -243,34 +242,6 @@ pub struct SplieRuleCount {
 
 impl SplieRuleCount {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
-        if self.current_num_packet >= self.threshold_num_packet {
-            // panic!("stop");
-            self.current_prefix += 1;
-            if self.file_count > 0 && self.current_prefix >= self.file_count {
-                self.current_prefix = 0;
-            }
-            let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
-            println!("write_path: {}", write_path);
-            let mut fs = File::create(write_path)?;
-
-            if let Some(shb) = &self.shb {
-                shb.write(&mut fs, pbo)?;
-            } else {
-                panic!("shb not found");
-            }
-            if let Some(idbs) = &self.idbs {
-                for idb in idbs {
-                    idb.write(&mut fs, pbo)?;
-                }
-            } else {
-                panic!("idb not found");
-            }
-
-            self.current_num_packet = 0;
-            self.write_fs = fs;
-        }
-
-        block.write(&mut self.write_fs, pbo)?;
         // debug use
         // match block {
         //     GeneralBlock::EnhancedPacketBlock(_) => println!("EPB"),
@@ -281,10 +252,39 @@ impl SplieRuleCount {
         //     GeneralBlock::SimplePacketBlock(_) => println!("SPB"),
         // }
         match block {
-            GeneralBlock::EnhancedPacketBlock(_) => self.current_num_packet += 1,
-            GeneralBlock::SimplePacketBlock(_) => self.current_num_packet += 1,
-            _ => (),
+            GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
+                if self.current_num_packet >= self.threshold_num_packet {
+                    // panic!("stop");
+                    self.current_prefix += 1;
+                    if self.file_count > 0 && self.current_prefix >= self.file_count {
+                        self.current_prefix = 0;
+                    }
+                    let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
+                    println!("write_path: {}", write_path);
+                    let mut fs = File::create(write_path)?;
+
+                    if let Some(shb) = &self.shb {
+                        shb.write(&mut fs, pbo)?;
+                    } else {
+                        panic!("shb not found");
+                    }
+                    if let Some(idbs) = &self.idbs {
+                        for idb in idbs {
+                            idb.write(&mut fs, pbo)?;
+                        }
+                    } else {
+                        panic!("idb not found");
+                    }
+
+                    self.current_num_packet = 0;
+                    self.write_fs = fs;
+                }
+                self.current_num_packet += 1;
+            }
+            _ => (), // ignore other blocks
         }
+
+        block.write(&mut self.write_fs, pbo)?;
         Ok(())
     }
 }
