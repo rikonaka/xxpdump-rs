@@ -8,21 +8,24 @@ The next generation of traffic capture software.
 
 You can download it directly from the release page. Please note that you need to have installed the `npcap` driver on Windows (it will be automatically installed when you install Wireshark, or you can download and install it separately, and select `winpcap compatibility mode` when installing).
 
-### Compile and install it yourself
+### Compile and install it yourself (Linux)
 
-Linux:
+
+#### Libpcap
 
 ```bash
 cargo install xxpdump --no-default-features --features "libpcap"
 ```
 
-Or use `libpnet`:
+#### Libpnet
 
 ```bash
 cargo install xxpdump --no-default-features --features "libpnet"
 ```
 
-Windows:
+### Compile and install it yourself (Windows)
+
+On Windows, there is only `npcap` as the underlying library option (regardless of whether the underlying library is `libpcap` or `libpnet`).
 
 Download the `npcap-sdk` file from the [npcap](https://npcap.com/) official website and compile it yourself.
 
