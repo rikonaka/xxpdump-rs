@@ -1,6 +1,6 @@
 [package]
 name = "xxpdump"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["RikoNaka <xxy1836@gmail.com>"]
 description = "The next generation of traffic capture software"
 repository = "https://github.com/rikonaka/xxpdump-rs"
@@ -21,7 +21,6 @@ tracing-subscriber = "^0"
 ctrlc = "^3"
 chrono = "^0"
 anyhow = "^1"
-prettytable = "^0"
 pcap = { version = "^2", optional = true }
 subnetwork = "^0"
 

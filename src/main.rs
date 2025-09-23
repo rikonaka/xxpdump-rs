@@ -9,10 +9,6 @@ use pcapture;
 use pcapture::Device;
 #[cfg(feature = "libpnet")]
 use pnet::ipnetwork::IpNetwork;
-use prettytable::Cell;
-use prettytable::Row;
-use prettytable::Table;
-use prettytable::row;
 use serde::Deserialize;
 use serde::Serialize;
 use std::iter::zip;
@@ -50,7 +46,7 @@ const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 #[command(author = "RikoNaka", version, about, long_about = None)]
 struct Args {
     /// The interface to capture, by default, this is 'any' which means pseudo-device that captures on all interfaces
-    #[arg(short = 'i', long)]
+    #[arg(short = 'i', long, default_value = "any")]
     interface: String,
 
     /// Exit after receiving 'count' packets
@@ -186,13 +182,13 @@ fn list_interface() {
     let devices = Device::list();
     debug!("init devices list done");
 
-    let mut info_vec = Vec::new();
+    let mut info = Vec::new();
     for device in devices {
-        let mut tmp_vec = Vec::new();
-        tmp_vec.push(device.name.clone());
+        let mut line = Vec::new();
+        line.push(device.name);
         match &device.desc {
-            Some(desc) => tmp_vec.push((*desc).clone()),
-            None => tmp_vec.push(String::from("NODESC")),
+            Some(desc) => line.push(desc.clone()),
+            None => line.push(String::from("no_desc")),
         }
         let mut ips = Vec::new();
         for ip in &device.ips {
@@ -205,33 +201,24 @@ fn list_interface() {
                 }
             }
         }
+        let ips_str = if ips.len() > 0 {
+            ips.join("|")
+        } else {
+            String::from("no_ip")
+        };
+        line.push(ips_str);
         match device.mac {
             Some(mac) => {
-                tmp_vec.push(mac.to_string());
+                line.push(mac.to_string());
             }
-            None => tmp_vec.push(String::from("NOMAC")),
+            None => line.push(String::from("no_mac")),
         }
-        let info = vec![tmp_vec, ips];
-        info_vec.push(info);
+        let line_str = line.join(", ");
+        info.push(line_str);
     }
 
-    let mut table = Table::new();
-    table.add_row(row!["ID", "NAME", "DESC", "MAC", "IP"]);
-
-    for (ind, info) in info_vec.into_iter().enumerate() {
-        let ind = ind + 1;
-        let mut cells = vec![Cell::new(&ind.to_string())];
-        let tmp_vec = &info[0];
-        let ips = &info[1];
-        for t in tmp_vec {
-            cells.push(Cell::new(&t));
-        }
-        let ips_str = ips.join("\n");
-        cells.push(Cell::new(&ips_str));
-        let row = Row::new(cells);
-        table.add_row(row);
-    }
-    table.printstd();
+    let info_str = info.join("\n");
+    println!("{}", info_str);
 }
 
 #[cfg(feature = "libpcap")]
@@ -239,13 +226,14 @@ fn list_interface() {
     let devices = Device::list().expect("get device from libpcap failed");
     debug!("init devices list done");
 
-    let mut info_vec = Vec::new();
+    let mut info = Vec::new();
     for device in devices {
-        let mut tmp_vec = Vec::new();
-        tmp_vec.push(device.name.clone());
+        let mut line = Vec::new();
+        line.push(device.name);
+
         match &device.desc {
-            Some(desc) => tmp_vec.push((*desc).clone()),
-            None => tmp_vec.push(String::from("NODESC")),
+            Some(desc) => line.push(desc.clone()),
+            None => line.push(String::from("no_desc")),
         }
         let mut ips = Vec::new();
         for address in &device.addresses {
@@ -258,28 +246,20 @@ fn list_interface() {
                 }
             }
         }
-        tmp_vec.push(String::from("LIBPCAP NOMAC"));
-        let info = vec![tmp_vec, ips];
-        info_vec.push(info);
+        let ips_str = if ips.len() > 0 {
+            ips.join("|")
+        } else {
+            String::from("no_ip")
+        };
+        line.push(ips_str);
+        line.push(String::from("libpcap_no_mac"));
+
+        let line_str = line.join(", ");
+        info.push(line_str);
     }
 
-    let mut table = Table::new();
-    table.add_row(row!["ID", "NAME", "DESC", "MAC", "IP"]);
-
-    for (ind, info) in info_vec.into_iter().enumerate() {
-        let ind = ind + 1;
-        let mut cells = vec![Cell::new(&ind.to_string())];
-        let tmp_vec = &info[0];
-        let ips = &info[1];
-        for t in tmp_vec {
-            cells.push(Cell::new(&t));
-        }
-        let ips_str = ips.join("\n");
-        cells.push(Cell::new(&ips_str));
-        let row = Row::new(cells);
-        table.add_row(row);
-    }
-    table.printstd();
+    let info_str = info.join("\n");
+    println!("{}", info_str);
 }
 
 fn quitting(mode: &str) {
