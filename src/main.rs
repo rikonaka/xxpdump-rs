@@ -37,7 +37,7 @@ static PACKETS_SERVER_TOTAL_RECVED: LazyLock<Arc<Mutex<usize>>> =
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
 // The default is 65535. This should always be larger than the snaplen.
-const DEFAULT_BUFFER_SIZE: usize = 65535;
+const DEFAULT_BUFFER_SIZE: usize = 163840; // 16MB
 // The default is 65535.
 const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 

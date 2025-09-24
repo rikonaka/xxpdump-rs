@@ -177,7 +177,7 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         .promisc(args.promisc)
         .buffer_size(args.buffer_size as i32)
         .snaplen(args.snaplen as i32)
-        .timeout(args.timeout as i32)
+        .timeout((args.timeout * 1000) as i32)
         .open()
         .expect("can not open libpcap capture");
 

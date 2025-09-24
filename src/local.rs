@@ -4,9 +4,6 @@ use pcap::Capture;
 use pcap::Device;
 #[cfg(feature = "libpnet")]
 use pcapture;
-#[cfg(feature = "libpnet")]
-use pcapture::Capture;
-use pcapture::PcapByteOrder;
 #[cfg(feature = "libpcap")]
 use pcapture::filter::Filters;
 #[cfg(feature = "libpcap")]
@@ -14,6 +11,9 @@ use pcapture::pcapng::EnhancedPacketBlock;
 use pcapture::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::PcapNg;
+#[cfg(feature = "libpnet")]
+use pcapture::Capture;
+use pcapture::PcapByteOrder;
 #[cfg(feature = "libpcap")]
 use pnet::ipnetwork::IpNetwork;
 #[cfg(feature = "libpcap")]
@@ -21,9 +21,9 @@ use subnetwork::NetmaskExt;
 use tracing::debug;
 use tracing::warn;
 
-use crate::Args;
 use crate::split::SplitRule;
 use crate::update_captured_stat;
+use crate::Args;
 
 #[cfg(feature = "libpnet")]
 pub fn capture_local(args: Args) {
@@ -85,7 +85,7 @@ pub fn capture_local(args: Args) {
             .promisc(args.promisc)
             .buffer_size(args.buffer_size as i32)
             .snaplen(args.snaplen as i32)
-            .timeout(args.timeout as i32)
+            .timeout((args.timeout * 1000) as i32)
             .open()
             .expect("can not open libpcap capture");
         cap
@@ -93,7 +93,7 @@ pub fn capture_local(args: Args) {
         let cap = cap
             .buffer_size(args.buffer_size as i32)
             .snaplen(args.snaplen as i32)
-            .timeout(args.timeout as i32)
+            .timeout((args.timeout * 1000) as i32)
             .open()
             .expect("can not open libpcap capture");
         cap
