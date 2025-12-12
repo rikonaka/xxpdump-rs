@@ -85,7 +85,7 @@ pub fn capture_local(args: Args) {
             .promisc(args.promisc)
             .buffer_size(args.buffer_size as i32)
             .snaplen(args.snaplen as i32)
-            .timeout((args.timeout * 1000.0) as i32)
+            // .timeout((args.timeout * 1000.0) as i32)
             .open()
             .expect("can not open libpcap capture");
         cap

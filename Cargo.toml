@@ -1,6 +1,6 @@
 [package]
 name = "xxpdump"
-version = "0.3.3"
+version = "0.4.0"
 authors = ["RikoNaka <xxy1836@gmail.com>"]
 description = "The next generation of traffic capture software"
 repository = "https://github.com/rikonaka/xxpdump-rs"
@@ -10,25 +10,24 @@ edition = "2024"
 keywords = ["tcpdump", "traffic", "wireshark"]
 
 [dependencies]
-clap = { version="^4", features=["derive"] }
-pnet = { version = "^0", features = ["serde"] }
-pcapture = { version = "^0", features = ["pcapng"] }
-serde = { version = "^1", features = ["derive"]}
-bincode = { version = "^2", features = ["serde"] }
-tokio = { version = "^1", features = ["full"] }
-tracing = "^0"
-tracing-subscriber = "^0"
 ctrlc = "^3"
 chrono = "^0"
 anyhow = "^1"
-pcap = { version = "^2", optional = true }
+tracing = "^0"
 subnetwork = "^0"
+tracing-subscriber = "^0"
+clap = { version="^4", features=["derive"] }
+pnet = { version = "^0", features = ["serde"] }
+pcapture = { path = "../pcapture-rs", version = "^0", features = ["pcapng"] }
+serde = { version = "^1", features = ["derive"]}
+bincode = { version = "^2", features = ["serde"] }
+tokio = { version = "^1", features = ["full"] }
 
 [profile.release]
 codegen-units = 1
 lto = true
 
 [features]
-default = ["libpcap"]
-libpnet = []
-libpcap = ["pcap"]
+default = ["libpnet"]
+libpnet = ["pcapture/libpnet"]
+libpcap = ["pcapture/libpcap"]

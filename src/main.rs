@@ -179,19 +179,16 @@ fn init_log_level(log_level: &str) {
 
 #[cfg(feature = "libpnet")]
 fn list_interface() {
-    let devices = Device::list();
+    let devices = Device::list().expect("get device from libpnet failed");
     debug!("init devices list done");
 
     let mut info = Vec::new();
     for device in devices {
         let mut line = Vec::new();
-        line.push(device.name);
-        match &device.desc {
-            Some(desc) => line.push(desc.clone()),
-            None => line.push(String::from("no_desc")),
-        }
+        line.push(device.0.name);
+        line.push(device.0.description);
         let mut ips = Vec::new();
-        for ip in &device.ips {
+        for ip in &device.0.ips {
             match ip {
                 IpNetwork::V4(ipv4) => {
                     ips.push(ipv4.to_string());
@@ -207,7 +204,7 @@ fn list_interface() {
             String::from("no_ip")
         };
         line.push(ips_str);
-        match device.mac {
+        match device.0.mac {
             Some(mac) => {
                 line.push(mac.to_string());
             }

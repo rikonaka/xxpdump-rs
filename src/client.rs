@@ -13,7 +13,7 @@ use pcapture::PcapByteOrder;
 use pcapture::filter::Filters;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::EnhancedPacketBlock;
-use pcapture::pcapng::GeneralBlock;
+use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::pcapng::PcapNg;
 #[cfg(feature = "libpcap")]
