@@ -2,9 +2,9 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Local;
 use pcapture::PcapByteOrder;
-use pcapture::pcapng::GeneralBlock;
-use pcapture::pcapng::InterfaceDescriptionBlock;
-use pcapture::pcapng::SectionHeaderBlock;
+use pcapture::fs::pcapng::GeneralBlock;
+use pcapture::fs::pcapng::InterfaceDescriptionBlock;
+use pcapture::fs::pcapng::SectionHeaderBlock;
 use std::fs::File;
 use tracing::debug;
 

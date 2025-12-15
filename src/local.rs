@@ -4,16 +4,16 @@ use pcap::Capture;
 use pcap::Device;
 #[cfg(feature = "libpnet")]
 use pcapture;
-#[cfg(feature = "libpcap")]
-use pcapture::filter::Filters;
-#[cfg(feature = "libpcap")]
-use pcapture::pcapng::EnhancedPacketBlock;
-use pcapture::pcapng::GeneralBlock;
-#[cfg(feature = "libpcap")]
-use pcapture::pcapng::PcapNg;
 #[cfg(feature = "libpnet")]
 use pcapture::Capture;
 use pcapture::PcapByteOrder;
+#[cfg(feature = "libpcap")]
+use pcapture::filter::Filters;
+use pcapture::fs::pcapng::GeneralBlock;
+#[cfg(feature = "libpcap")]
+use pcapture::pcapng::EnhancedPacketBlock;
+#[cfg(feature = "libpcap")]
+use pcapture::pcapng::PcapNg;
 #[cfg(feature = "libpcap")]
 use pnet::ipnetwork::IpNetwork;
 #[cfg(feature = "libpcap")]
@@ -21,26 +21,28 @@ use subnetwork::NetmaskExt;
 use tracing::debug;
 use tracing::warn;
 
+use crate::Args;
 use crate::split::SplitRule;
 use crate::update_captured_stat;
-use crate::Args;
 
 #[cfg(feature = "libpnet")]
 pub fn capture_local(args: Args) {
     let pbo = PcapByteOrder::WiresharkDefault;
-    let mut cap = match Capture::new(&args.interface, args.filter.clone()) {
+    let mut cap = match Capture::new(&args.interface) {
         Ok(c) => c,
         Err(e) => panic!("init the Capture failed: {}", e),
     };
-    cap.promiscuous(args.promisc);
-    cap.buffer_size(args.buffer_size);
-    cap.snaplen(args.snaplen);
-    cap.timeout(args.timeout);
+    cap.set_promiscuous(args.promisc);
+    cap.set_buffer_size(args.buffer_size);
+    cap.set_snaplen(args.snaplen);
+    cap.set_timeout(args.timeout);
 
     debug!("open save file path");
 
     let mut split_rule = SplitRule::init(&args).expect("init SplitRule failed");
-    let pcapng = cap.gen_pcapng(pbo).expect("generate pcapng header failed");
+    let pcapng = cap
+        .gen_pcapng_header(pbo)
+        .expect("generate pcapng header failed");
 
     for block in pcapng.blocks {
         // write all blocks

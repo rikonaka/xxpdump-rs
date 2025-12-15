@@ -1,21 +1,20 @@
 use anyhow::Result;
 use bincode;
 use bincode::config::Configuration;
-#[cfg(feature = "libpcap")]
-use pcap::Capture;
-#[cfg(feature = "libpcap")]
-use pcap::Device;
-#[cfg(feature = "libpnet")]
 use pcapture::Capture;
+#[cfg(feature = "libpcap")]
+use pcapture::Device;
 #[cfg(feature = "libpnet")]
 use pcapture::PcapByteOrder;
 #[cfg(feature = "libpcap")]
+use pcapture::libpcap::Addr;
+#[cfg(feature = "libpnet")]
 use pcapture::filter::Filters;
 #[cfg(feature = "libpcap")]
-use pcapture::pcapng::EnhancedPacketBlock;
+use pcapture::fs::pcapng::EnhancedPacketBlock;
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
-use pcapture::pcapng::PcapNg;
+use pcapture::fs::pcapng::PcapNg;
 #[cfg(feature = "libpcap")]
 use pnet::ipnetwork::IpNetwork;
 #[cfg(feature = "libpcap")]
@@ -128,21 +127,21 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         String::new()
     };
 
-    let mut cap = match Capture::new(&args.interface, Some(filter)) {
+    let mut cap = match Capture::new(&args.interface) {
         Ok(c) => c,
         Err(e) => panic!("init the Capture failed: {}", e),
     };
-    cap.promiscuous(args.promisc);
-    cap.buffer_size(args.buffer_size);
-    cap.snaplen(args.snaplen);
-    cap.timeout(args.timeout);
+    cap.set_promiscuous(args.promisc);
+    cap.set_buffer_size(args.buffer_size);
+    cap.set_snaplen(args.snaplen);
+    cap.set_timeout(args.timeout);
+    cap.set_filter(&filter)?;
 
     let pbo = PcapByteOrder::WiresharkDefault; // default
     let config = bincode::config::standard();
     let mut client = Client::connect(&args.server_addr).await?;
-
     if client.auth(&args.server_passwd).await? {
-        let pcapng = cap.gen_pcapng(pbo)?;
+        let pcapng = cap.gen_pcapng_header(pbo)?;
         for block in pcapng.blocks {
             // shb and idb
             client.send_block(block, config).await?;
@@ -172,26 +171,31 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         .find(|&d| d.name == args.interface)
         .expect("can not found interface");
 
-    let cap = Capture::from_device(device.clone()).expect("init the Capture failed");
-    let mut cap = cap
-        .promisc(args.promisc)
-        .buffer_size(args.buffer_size as i32)
-        .snaplen(args.snaplen as i32)
-        .timeout((args.timeout * 1000.0) as i32)
-        .open()
-        .expect("can not open libpcap capture");
+    let cap = Capture::new(&device.name).expect("init the Capture failed");
+
+    let filter = if args.ignore_self_traffic {
+        let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
+        let server_addr = server_addr_split[0];
+        let server_port = server_addr_split[1];
+        // ignore communication with the server
+        let filter = format!("ip!={} and port!={}", server_addr, server_port);
+        filter
+    } else {
+        String::new()
+    };
+
+    cap.set_promiscuous(args.promisc);
+    cap.set_buffer_size(args.buffer_size);
+    cap.set_snaplen(args.snaplen as i32);
+    cap.set_timeout((args.timeout * 1000.0) as i32);
+    cap.set_filter(&filter);
 
     let config = bincode::config::standard();
     let mut client = Client::connect(&args.server_addr).await?;
 
-    let filters = match &args.filter {
-        Some(filter) => Filters::parser(filter).expect("parser filter failed"),
-        None => None,
-    };
-
     if client.auth(&args.server_passwd).await? {
         let if_name = &device.name;
-        let if_description = match &device.desc {
+        let if_description = match &device.description {
             Some(d) => d.clone(),
             None => String::new(),
         };
@@ -202,6 +206,9 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
             let netmask = address.netmask;
             let prefix = match netmask {
                 Some(addr) => {
+                    match addr {
+                        Addr::IpAddr(ip_addr) => ip_addr,
+                    }
                     let netmask_ext = NetmaskExt::from_addr(addr);
                     netmask_ext.get_prefix()
                 }
