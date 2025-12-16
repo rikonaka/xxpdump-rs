@@ -6,8 +6,6 @@ use pcapture::Capture;
 use pcapture::Device;
 #[cfg(feature = "libpnet")]
 use pcapture::PcapByteOrder;
-#[cfg(feature = "libpcap")]
-use pcapture::libpcap::Addr;
 #[cfg(feature = "libpnet")]
 use pcapture::filter::Filters;
 #[cfg(feature = "libpcap")]
@@ -15,6 +13,8 @@ use pcapture::fs::pcapng::EnhancedPacketBlock;
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::PcapNg;
+#[cfg(feature = "libpcap")]
+use pcapture::libpcap::Addr;
 #[cfg(feature = "libpcap")]
 use pnet::ipnetwork::IpNetwork;
 #[cfg(feature = "libpcap")]
@@ -171,7 +171,7 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         .find(|&d| d.name == args.interface)
         .expect("can not found interface");
 
-    let cap = Capture::new(&device.name).expect("init the Capture failed");
+    let mut cap = Capture::new(&device.name).expect("init the Capture failed");
 
     let filter = if args.ignore_self_traffic {
         let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
@@ -200,25 +200,8 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
             None => String::new(),
         };
 
-        let mut ips = Vec::new();
-        for address in &device.addresses {
-            let addr = address.addr;
-            let netmask = address.netmask;
-            let prefix = match netmask {
-                Some(addr) => {
-                    match addr {
-                        Addr::IpAddr(ip_addr) => ip_addr,
-                    }
-                    let netmask_ext = NetmaskExt::from_addr(addr);
-                    netmask_ext.get_prefix()
-                }
-                None => 0,
-            };
-            let ipn = IpNetwork::new(addr, prefix).expect("create IpNetwork failed");
-            ips.push(ipn);
-        }
-        let mac = None;
-        let pcapng = PcapNg::new_raw(if_name, &if_description, &ips, mac);
+        let ips = &device.addresses;
+        let pcapng = PcapNg::new_raw(&if_name, &if_description, &ips);
 
         for block in pcapng.blocks {
             // shb and idb
@@ -227,26 +210,17 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         }
 
         loop {
-            match cap.next_packet() {
+            match cap.fetch() {
                 Ok(packet) => {
-                    let packet_data = packet.data;
-                    match filters.as_ref() {
-                        Some(fls) => {
-                            if fls.check(packet_data).expect("filter check failed") {
-                                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                                    .expect("create enhanced packet block failed");
-                                let block = GeneralBlock::EnhancedPacketBlock(eb);
-                                client.send_block(block, config).await?;
-                                update_captured_stat();
-                            }
-                        }
-                        None => {
-                            let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                                .expect("create enhanced packet block failed");
-                            let block = GeneralBlock::EnhancedPacketBlock(eb);
-                            client.send_block(block, config).await?;
-                            update_captured_stat();
-                        }
+                    for packet_data in packet {
+                        let data = packet_data.data;
+                        let ts_sec = packet_data.tv_sec as u32;
+                        let ts_usec = packet_data.tv_usec as u32;
+                        let eb = EnhancedPacketBlock::new(0, data, args.snaplen, ts_sec, ts_usec)
+                            .expect("create enhanced packet block failed");
+                        let block = GeneralBlock::EnhancedPacketBlock(eb);
+                        client.send_block(block, config).await?;
+                        update_captured_stat();
                     }
                 }
                 Err(e) => warn!("{}", e),

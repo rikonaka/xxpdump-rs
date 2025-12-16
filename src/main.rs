@@ -1,11 +1,8 @@
 use bincode::Decode;
 use bincode::Encode;
 use clap::Parser;
-#[cfg(feature = "libpcap")]
-use pcap::Device;
 #[cfg(feature = "libpnet")]
 use pcapture;
-#[cfg(feature = "libpnet")]
 use pcapture::Device;
 #[cfg(feature = "libpnet")]
 use pnet::ipnetwork::IpNetwork;
