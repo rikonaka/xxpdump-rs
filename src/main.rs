@@ -4,13 +4,13 @@ use clap::Parser;
 #[cfg(feature = "libpnet")]
 use pcapture;
 use pcapture::Device;
+#[cfg(feature = "libpcap")]
+use pcapture::libpcap::Addr;
 #[cfg(feature = "libpnet")]
 use pnet::ipnetwork::IpNetwork;
 use serde::Deserialize;
 use serde::Serialize;
 use std::iter::zip;
-#[cfg(feature = "libpcap")]
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -225,19 +225,20 @@ fn list_interface() {
         let mut line = Vec::new();
         line.push(device.name);
 
-        match &device.desc {
+        match &device.description {
             Some(desc) => line.push(desc.clone()),
             None => line.push(String::from("no_desc")),
         }
         let mut ips = Vec::new();
         for address in &device.addresses {
             match address.addr {
-                IpAddr::V4(ipv4) => {
-                    ips.push(ipv4.to_string());
-                }
-                IpAddr::V6(ipv6) => {
-                    ips.push(ipv6.to_string());
-                }
+                Some(addr) => match addr {
+                    Addr::IpAddr(ipaddr) => {
+                        ips.push(ipaddr.to_string());
+                    }
+                    _ => (),
+                },
+                None => (),
             }
         }
         let ips_str = if ips.len() > 0 {
