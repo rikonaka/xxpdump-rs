@@ -1,3 +1,4 @@
+use anyhow::Result;
 use bincode::Decode;
 use bincode::Encode;
 use clap::Parser;
@@ -145,18 +146,16 @@ struct PcapNgTransport {
 /* SPLIT LINE */
 
 fn update_captured_stat() {
-    let mut p = match PACKETS_CAPTURED.lock() {
-        Ok(p) => p,
-        Err(e) => panic!("update PACKETS_CAPTURED failed: {}", e),
-    };
+    let mut p = PACKETS_CAPTURED
+        .lock()
+        .expect("update PACKETS_CAPTURED failed");
     *p += 1;
 }
 
 fn update_server_recved_stat() {
-    let mut p = match PACKETS_SERVER_TOTAL_RECVED.lock() {
-        Ok(p) => p,
-        Err(e) => panic!("update PACKETS_SERVER_TOTAL_RECVED failed: {}", e),
-    };
+    let mut p = PACKETS_SERVER_TOTAL_RECVED
+        .lock()
+        .expect("update PACKETS_SERVER_TOTAL_RECVED failed");
     *p += 1;
 }
 
@@ -175,8 +174,8 @@ fn init_log_level(log_level: &str) {
 }
 
 #[cfg(feature = "libpnet")]
-fn list_interface() {
-    let devices = Device::list().expect("get device from libpnet failed");
+fn list_interface() -> Result<()> {
+    let devices = Device::list()?;
     debug!("init devices list done");
 
     let mut info = Vec::new();
@@ -213,11 +212,13 @@ fn list_interface() {
 
     let info_str = info.join("\n");
     println!("{}", info_str);
+
+    Ok(())
 }
 
 #[cfg(feature = "libpcap")]
-fn list_interface() {
-    let devices = Device::list().expect("get device from libpcap failed");
+fn list_interface() -> Result<()> {
+    let devices = Device::list()?;
     debug!("init devices list done");
 
     let mut info = Vec::new();
@@ -255,6 +256,8 @@ fn list_interface() {
 
     let info_str = info.join("\n");
     println!("{}", info_str);
+
+    Ok(())
 }
 
 fn quitting(mode: &str) {
@@ -306,20 +309,20 @@ fn print_valid_procotol() {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     let mode = args.mode.clone();
     ctrlc::set_handler(move || {
         quitting(&mode);
     })
-    .expect("error setting Ctrl+C handler");
+    .expect("error setting ctrl+c handler");
 
     init_log_level(&args.log_level);
     debug!("init args done");
 
     if args.list_interface {
-        list_interface();
+        list_interface()?;
         std::process::exit(0);
     }
 
@@ -335,19 +338,19 @@ async fn main() {
 
     info!("working...");
     match args.mode.as_str() {
-        "local" => capture_local(args),
+        "local" => {
+            capture_local(args)?;
+        }
         "client" => {
-            capture_remote_client(args)
-                .await
-                .expect("capture remote client error");
+            capture_remote_client(args).await?;
         }
         "server" => {
-            capture_remote_server(args)
-                .await
-                .expect("capture remote server error");
+            capture_remote_server(args).await?;
         }
         _ => panic!("unsupported mode"),
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -359,8 +362,6 @@ mod test {
         let args = Args::parse_from(itr);
         println!("{}", args.mode);
         println!("{:?}", args.rotate);
-        capture_remote_server(args)
-            .await
-            .expect("capture remote server error");
+        capture_remote_server(args).await.unwrap();
     }
 }

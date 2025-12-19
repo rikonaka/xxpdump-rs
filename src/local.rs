@@ -1,19 +1,15 @@
+use anyhow::Result;
 use pcapture::Capture;
 #[cfg(feature = "libpcap")]
 use pcapture::Device;
 use pcapture::PcapByteOrder;
-#[cfg(feature = "libpnet")]
-use pcapture::filter::Filters;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::EnhancedPacketBlock;
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::PcapNg;
-#[cfg(feature = "libpcap")]
-use pnet::ipnetwork::IpNetwork;
-#[cfg(feature = "libpcap")]
-use subnetwork::NetmaskExt;
 use tracing::debug;
+#[cfg(feature = "libpnet")]
 use tracing::warn;
 
 use crate::Args;
@@ -21,27 +17,40 @@ use crate::split::SplitRule;
 use crate::update_captured_stat;
 
 #[cfg(feature = "libpnet")]
-pub fn capture_local(args: Args) {
+pub fn capture_local(args: Args) -> Result<()> {
+    let filter = if args.ignore_self_traffic {
+        let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
+        let server_addr = server_addr_split[0];
+        let server_port = server_addr_split[1];
+        // ignore communication with the server
+        let filter = format!("ip!={} and port!={}", server_addr, server_port);
+        filter
+    } else {
+        String::new()
+    };
+
+    let filter = if let Some(fu) = &args.filter {
+        format!("{} and ({})", filter, fu)
+    } else {
+        filter
+    };
+
     let pbo = PcapByteOrder::WiresharkDefault;
-    let mut cap = Capture::new(&args.interface).expect(&format!("init the capture failed: {}", e));
+    let mut cap = Capture::new(&args.interface)?;
     cap.set_promiscuous(args.promisc);
     cap.set_buffer_size(args.buffer_size);
     cap.set_snaplen(args.snaplen);
     cap.set_timeout(args.timeout);
-    cap.set_filter(args.filter)?;
+    cap.set_filter(&filter)?;
 
     debug!("open save file path");
 
-    let mut split_rule = SplitRule::init(&args).expect("init SplitRule failed");
-    let pcapng = cap
-        .gen_pcapng_header(pbo)
-        .expect("generate pcapng header failed");
+    let mut split_rule = SplitRule::init(&args)?;
+    let pcapng = cap.gen_pcapng_header(pbo)?;
 
     for block in pcapng.blocks {
         // write all blocks
-        split_rule
-            .write(block.clone(), pbo)
-            .expect("write pcapng header failed");
+        split_rule.write(block.clone(), pbo)?;
         match block {
             GeneralBlock::SectionHeaderBlock(shb) => split_rule.update_shb(shb.clone()),
             GeneralBlock::InterfaceDescriptionBlock(idb) => split_rule.update_idb(idb.clone()),
@@ -52,7 +61,7 @@ pub fn capture_local(args: Args) {
     loop {
         match cap.next_as_pcapng() {
             Ok(block) => {
-                split_rule.write(block, pbo).expect("write block failed");
+                split_rule.write(block, pbo)?;
                 update_captured_stat();
             }
             Err(e) => warn!("{}", e),
@@ -61,44 +70,40 @@ pub fn capture_local(args: Args) {
 }
 
 #[cfg(feature = "libpcap")]
-pub fn capture_local(args: Args) {
+pub fn capture_local(args: Args) -> Result<()> {
     let pbo = PcapByteOrder::WiresharkDefault;
 
-    let mut cap = Capture::new(&args.interface).expect("init capture failed: {}");
+    let mut cap = Capture::new(&args.interface)?;
     cap.set_promiscuous(args.promisc);
     cap.set_buffer_size(args.buffer_size);
     cap.set_snaplen(args.snaplen as i32);
     cap.set_timeout((args.timeout * 1000.0) as i32);
-    if let Some(filter) = args.filter {
-        cap.set_filter(&filter);
+    if let Some(filter) = &args.filter {
+        cap.set_filter(filter);
     }
 
     debug!("open save file path");
 
-    let devices = Device::list().expect("get devices failed");
+    let devices = Device::list()?;
     let mut ips = Vec::new();
-    for address in &devices {
-        let addr = address.addresses;
-        let prefix = match netmask {
-            Some(addr) => {
-                let netmask_ext = NetmaskExt::from_addr(addr);
-                netmask_ext.get_prefix()
+    let mut if_description = String::new();
+    for device in devices {
+        if device.name == args.interface {
+            ips = device.addresses.clone();
+            if let Some(d) = device.description {
+                if_description = d.clone();
             }
-            None => 0,
-        };
-        let ipn = IpNetwork::new(addr, prefix).expect("create IpNetwork failed");
-        ips.push(ipn);
+            break;
+        }
     }
-    let mac = None;
+    let if_name = &args.interface;
 
-    let pcapng = PcapNg::new_raw(if_name, &if_description, &ips, mac);
-    let mut split_rule = SplitRule::init(&args).expect("init SplitRule failed");
+    let pcapng = PcapNg::new_raw(if_name, &if_description, &ips);
+    let mut split_rule = SplitRule::init(&args)?;
 
     for block in pcapng.blocks {
         // write all blocks
-        split_rule
-            .write(block.clone(), pbo)
-            .expect("write pcapng header failed");
+        split_rule.write(block.clone(), pbo)?;
         match block {
             GeneralBlock::SectionHeaderBlock(shb) => split_rule.update_shb(shb.clone()),
             GeneralBlock::InterfaceDescriptionBlock(idb) => split_rule.update_idb(idb.clone()),
@@ -107,34 +112,16 @@ pub fn capture_local(args: Args) {
     }
 
     loop {
-        let packet = match cap.next_packet() {
-            Ok(p) => p,
-            Err(e) => match e {
-                pcap::Error::TimeoutExpired => continue,
-                _ => panic!("get next packet failed: {}", e),
-            },
-        };
+        let packet = cap.fetch()?;
 
-        let packet_data = packet.data;
-        match &filters {
-            Some(fls) => {
-                if fls.check(packet_data).expect("filter check failed") {
-                    let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                        .expect("create enhanced packet block failed");
-                    let block = GeneralBlock::EnhancedPacketBlock(eb);
-                    split_rule.write(block, pbo).expect("write block failed");
-                    update_captured_stat();
-                } else {
-                    warn!("fls check failed")
-                }
-            }
-            None => {
-                let eb = EnhancedPacketBlock::new(0, packet_data, args.snaplen)
-                    .expect("create enhanced packet block failed");
-                let block = GeneralBlock::EnhancedPacketBlock(eb);
-                split_rule.write(block, pbo).expect("write block failed");
-                update_captured_stat();
-            }
+        for packet_data in packet {
+            let data = packet_data.data;
+            let ts_sec = packet_data.tv_sec as u32;
+            let ts_usec = packet_data.tv_usec as u32;
+            let eb = EnhancedPacketBlock::new(0, data, args.snaplen, ts_sec, ts_usec)?;
+            let block = GeneralBlock::EnhancedPacketBlock(eb);
+            split_rule.write(block, pbo)?;
+            update_captured_stat();
         }
     }
 }
@@ -148,6 +135,6 @@ mod test {
         let itr = vec!["", "--count", "10"];
         let args = Args::parse_from(itr);
         println!("{:?}", args.count);
-        capture_local(args);
+        capture_local(args).unwrap();
     }
 }

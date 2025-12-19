@@ -6,19 +6,11 @@ use pcapture::Capture;
 use pcapture::Device;
 #[cfg(feature = "libpnet")]
 use pcapture::PcapByteOrder;
-#[cfg(feature = "libpnet")]
-use pcapture::filter::Filters;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::EnhancedPacketBlock;
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::PcapNg;
-#[cfg(feature = "libpcap")]
-use pcapture::libpcap::Addr;
-#[cfg(feature = "libpcap")]
-use pnet::ipnetwork::IpNetwork;
-#[cfg(feature = "libpcap")]
-use subnetwork::NetmaskExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -127,6 +119,12 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         String::new()
     };
 
+    let filter = if let Some(fu) = args.filter {
+        format!("{} and ({})", filter, fu)
+    } else {
+        filter
+    };
+
     let mut cap = match Capture::new(&args.interface) {
         Ok(c) => c,
         Err(e) => panic!("init the Capture failed: {}", e),
@@ -165,13 +163,17 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
 
 #[cfg(feature = "libpcap")]
 pub async fn capture_remote_client(args: Args) -> Result<()> {
-    let devices = Device::list().expect("can not get device from libpcap");
-    let device = devices
-        .iter()
-        .find(|&d| d.name == args.interface)
-        .expect("can not found interface");
+    let devices = Device::list()?;
+    let device = devices.iter().find(|&d| d.name == args.interface);
+    let device = match device {
+        Some(d) => d,
+        None => {
+            error!("cannot find the interface: {}", args.interface);
+            return Ok(());
+        }
+    };
 
-    let mut cap = Capture::new(&device.name).expect("init the Capture failed");
+    let mut cap = Capture::new(&device.name)?;
 
     let filter = if args.ignore_self_traffic {
         let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
@@ -216,8 +218,7 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
                         let data = packet_data.data;
                         let ts_sec = packet_data.tv_sec as u32;
                         let ts_usec = packet_data.tv_usec as u32;
-                        let eb = EnhancedPacketBlock::new(0, data, args.snaplen, ts_sec, ts_usec)
-                            .expect("create enhanced packet block failed");
+                        let eb = EnhancedPacketBlock::new(0, data, args.snaplen, ts_sec, ts_usec)?;
                         let block = GeneralBlock::EnhancedPacketBlock(eb);
                         client.send_block(block, config).await?;
                         update_captured_stat();
