@@ -1,6 +1,10 @@
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use anyhow::Result;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use bincode;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use bincode::config::Configuration;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::Capture;
 #[cfg(feature = "libpcap")]
 use pcapture::Device;
@@ -8,24 +12,36 @@ use pcapture::Device;
 use pcapture::PcapByteOrder;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::EnhancedPacketBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::PcapNg;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncReadExt;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncWriteExt;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::net::TcpStream;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::error;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::warn;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgTransport;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgType;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::update_captured_stat;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 struct Client {
     stream: TcpStream,
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl Client {
     /// Connecting to a remote backup server.
     async fn connect(addr: &str) -> Result<Client> {

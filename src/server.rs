@@ -1,33 +1,62 @@
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use anyhow::Result;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use bincode::config;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use bincode::config::Configuration;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::PcapByteOrder;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::EnhancedPacketBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::InterfaceDescriptionBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::InterfaceStatisticsBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::NameResolutionBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::SectionHeaderBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::SimplePacketBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::collections::VecDeque;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::Arc;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::LazyLock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::Mutex;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncReadExt;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncWriteExt;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::net::TcpListener;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::net::TcpStream;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::error;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::info;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PACKETS_SERVER_TOTAL_RECVED;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgTransport;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgType;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::split::SplitRule;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::update_captured_stat;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::update_server_recved_stat;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn get_server_total_recved() -> usize {
     let packets_server_recved = match PACKETS_SERVER_TOTAL_RECVED.lock() {
         Ok(p) => *p,
@@ -36,13 +65,16 @@ fn get_server_total_recved() -> usize {
     packets_server_recved
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 static SERVER_PIPE: LazyLock<Arc<Mutex<VecDeque<PcapNgTransport>>>> = LazyLock::new(|| {
     let v = VecDeque::new();
     Arc::new(Mutex::new(v))
 });
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 struct ServerPipe;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl ServerPipe {
     fn push(pcapng_t: PcapNgTransport) {
         match SERVER_PIPE.lock() {
@@ -124,11 +156,13 @@ impl ServerPipe {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 struct Server {
     listener: TcpListener,
     server_passwd: String,
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl Server {
     async fn init(addr: &str, server_passwd: &str) -> Result<Server> {
         let listener = TcpListener::bind(addr).await?;
@@ -203,6 +237,7 @@ impl Server {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 pub async fn capture_remote_server(args: Args) -> Result<()> {
     info!("listening at {}", args.server_addr);
     let server_pip = ServerPipe;
@@ -220,6 +255,7 @@ pub async fn capture_remote_server(args: Args) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[cfg(test)]
 mod test {
     use std::fs::File;

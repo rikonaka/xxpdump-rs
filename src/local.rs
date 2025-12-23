@@ -1,19 +1,27 @@
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use anyhow::Result;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::Capture;
 #[cfg(feature = "libpcap")]
 use pcapture::Device;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::PcapByteOrder;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::EnhancedPacketBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
 use pcapture::fs::pcapng::PcapNg;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::debug;
 #[cfg(feature = "libpnet")]
 use tracing::warn;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::split::SplitRule;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::update_captured_stat;
 
 #[cfg(feature = "libpnet")]
@@ -126,6 +134,7 @@ pub fn capture_local(args: Args) -> Result<()> {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[cfg(test)]
 mod test {
     use super::*;

@@ -28,6 +28,6 @@ codegen-units = 1
 lto = true
 
 [features]
-default = ["libpnet"]
+default = []
 libpnet = ["pcapture/pcapng", "pcapture/libpnet"]
 libpcap = ["pcapture/pcapng", "pcapture/libpcap"]

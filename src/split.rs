@@ -1,15 +1,26 @@
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use anyhow::Result;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use chrono::DateTime;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use chrono::Local;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::PcapByteOrder;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::InterfaceDescriptionBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::SectionHeaderBlock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::fs::File;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::debug;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 /// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
 fn filesize_parser(file_size: &str) -> u64 {
     if file_size.len() > 0 {
@@ -60,11 +71,16 @@ fn filesize_parser(file_size: &str) -> u64 {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 const ROTATE_SEC_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 const ROTATE_MIN_FORMAT: &str = "%Y_%m_%d_%H_%M";
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 /// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
 fn rotate_parser(rotate: &str) -> (u64, &str) {
     if rotate.len() > 0 {
@@ -115,11 +131,13 @@ fn rotate_parser(rotate: &str) -> (u64, &str) {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug)]
 pub struct SplitRuleNone {
     write_fs: File,
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleNone {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         block.write(&mut self.write_fs, pbo)?;
@@ -127,6 +145,7 @@ impl SplitRuleNone {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug)]
 pub struct SplitRuleRotate {
     pub shb: Option<SectionHeaderBlock>,
@@ -140,6 +159,7 @@ pub struct SplitRuleRotate {
     prefix_format: String,
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleRotate {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         match block {
@@ -176,6 +196,7 @@ impl SplitRuleRotate {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug)]
 pub struct SplitRuleFileSize {
     pub shb: Option<SectionHeaderBlock>,
@@ -189,6 +210,7 @@ pub struct SplitRuleFileSize {
     file_count: usize,
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleFileSize {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         match block {
@@ -227,6 +249,7 @@ impl SplitRuleFileSize {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug)]
 pub struct SplieRuleCount {
     pub shb: Option<SectionHeaderBlock>,
@@ -240,6 +263,7 @@ pub struct SplieRuleCount {
     file_count: usize,
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplieRuleCount {
     pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
         // debug use
@@ -289,6 +313,7 @@ impl SplieRuleCount {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug)]
 pub enum SplitRule {
     Count(SplieRuleCount),
@@ -297,6 +322,7 @@ pub enum SplitRule {
     None(SplitRuleNone),
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRule {
     pub fn init(args: &Args) -> Result<SplitRule> {
         let path = &args.write;

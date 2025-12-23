@@ -1,23 +1,37 @@
 use anyhow::Result;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use bincode::Decode;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use bincode::Encode;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use clap::Parser;
 #[cfg(feature = "libpnet")]
 use pcapture;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::Device;
 #[cfg(feature = "libpcap")]
 use pcapture::libpcap::Addr;
 #[cfg(feature = "libpnet")]
 use pnet::ipnetwork::IpNetwork;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use serde::Deserialize;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use serde::Serialize;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::iter::zip;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::Arc;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::LazyLock;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::Mutex;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::Level;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::debug;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::info;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing_subscriber::FmtSubscriber;
 
 mod client;
@@ -25,20 +39,28 @@ mod local;
 mod server;
 mod split;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use client::capture_remote_client;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use local::capture_local;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use server::capture_remote_server;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 static PACKETS_SERVER_TOTAL_RECVED: LazyLock<Arc<Mutex<usize>>> =
     LazyLock::new(|| Arc::new(Mutex::new(0)));
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 // The default is 65535. This should always be larger than the snaplen.
 const DEFAULT_BUFFER_SIZE: usize = 163840; // 16MB
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 // The default is 65535.
 const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 /// Next generation packet dump software.
 #[derive(Parser, Debug, Clone)]
 #[command(author = "RikoNaka", version, about, long_about = None)]
@@ -87,10 +109,6 @@ struct Args {
     #[arg(long, alias = "fe", action, default_value_t = false)]
     filter_examples: bool,
 
-    /// Show the filter valid protocol
-    #[arg(long, alias = "fvp", action, default_value_t = false)]
-    filter_valid_protocol: bool,
-
     /// Set the program work mode, by default, this is 'local' mode and save traffic file in local storege
     #[arg(short = 'm', long, default_value = "local")]
     mode: String,
@@ -124,6 +142,7 @@ struct Args {
     ignore_self_traffic: bool,
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 enum PcapNgType {
     InterfaceDescriptionBlock,
@@ -137,6 +156,7 @@ enum PcapNgType {
     // CustomBlock2,
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 struct PcapNgTransport {
     pub p_type: PcapNgType,
@@ -145,6 +165,7 @@ struct PcapNgTransport {
 
 /* SPLIT LINE */
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn update_captured_stat() {
     let mut p = PACKETS_CAPTURED
         .lock()
@@ -152,6 +173,7 @@ fn update_captured_stat() {
     *p += 1;
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn update_server_recved_stat() {
     let mut p = PACKETS_SERVER_TOTAL_RECVED
         .lock()
@@ -159,6 +181,7 @@ fn update_server_recved_stat() {
     *p += 1;
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn init_log_level(log_level: &str) {
     let level = match log_level {
         "info" => Level::INFO,
@@ -260,6 +283,7 @@ fn list_interface() -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn quitting(mode: &str) {
     info!("quitting...");
     match mode {
@@ -283,6 +307,7 @@ fn quitting(mode: &str) {
     std::process::exit(0);
 }
 
+#[cfg(feature = "libpnet")]
 fn print_filter_examples() {
     let examples = vec![
         "ip=192.168.1.1 and !tcp",
@@ -299,15 +324,28 @@ fn print_filter_examples() {
     for (exa, exp) in zip(examples, explains) {
         info!("[{}] - {}", exa, exp);
     }
-    // let valid_procotol = pcapture::filter::show_valid_protocol();
-    // info!("{:?}", valid_procotol);
 }
 
-fn print_valid_procotol() {
-    let valid_procotol = pcapture::filter::valid_protocol();
-    info!("{:?}", valid_procotol);
+#[cfg(feature = "libpcap")]
+fn print_filter_examples() {
+    let examples = vec![
+        "host 192.168.1.1 and not tcp",
+        "not host 192.168.1.1 and not port 80",
+        "icmp and host 192.168.1.1",
+        "icmp and (host 192.168.1.1 or host 192.168.1.2)",
+    ];
+    let explains = vec![
+        "Capture packets with IP address 192.168.1.1 and port number 80",
+        "Capture packets with IP address not 192.168.1.1 and port number not 80",
+        "Capture packets with ICMP and IP address 192.168.1.1",
+        "Capture packets with ICMP and IP address 192.168.1.1 or IP address 192.168.1.2",
+    ];
+    for (exa, exp) in zip(examples, explains) {
+        info!("[{}] - {}", exa, exp);
+    }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -331,11 +369,6 @@ async fn main() -> Result<()> {
         std::process::exit(0);
     }
 
-    if args.filter_valid_protocol {
-        print_valid_procotol();
-        std::process::exit(0);
-    }
-
     info!("working...");
     match args.mode.as_str() {
         "local" => {
@@ -353,6 +386,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(feature = "libpnet", feature = "libpcap")))]
+#[tokio::main]
+async fn main() -> Result<()> {
+    panic!("please enable feature 'libpnet' or 'libpcap' to use this program");
+}
+
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[cfg(test)]
 mod test {
     use super::*;
