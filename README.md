@@ -41,7 +41,7 @@ $env:LIB="D:\test"
 Then install it through command.
 
 ```bash
-cargo install xxpdump
+cargo install xxpdump --no-default-features --features "libpnet"
 ```
 
 ## Platform
