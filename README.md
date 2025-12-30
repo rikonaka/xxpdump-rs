@@ -17,13 +17,13 @@ Because `musl` cannot compile `libpcap`, and the results compiled with `gnu` can
 You need to install the `libpcap` library on your machine in advance.
 
 ```bash
-cargo install xxpdump --no-default-features --features "libpcap"
+cargo install xxpdump --features "libpcap"
 ```
 
 #### Libpnet
 
 ```bash
-cargo install xxpdump --no-default-features --features "libpnet"
+cargo install xxpdump --features "libpnet"
 ```
 
 ### Compile and install it yourself (Windows)
@@ -41,7 +41,7 @@ $env:LIB="D:\test"
 Then install it through command.
 
 ```bash
-cargo install xxpdump --no-default-features --features "libpnet"
+cargo install xxpdump --features "libpnet"
 ```
 
 ## Platform
