@@ -1,6 +1,6 @@
 [package]
 name = "xxpdump"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["RikoNaka <xxy1836@gmail.com>"]
 description = "The next generation of traffic capture software"
 repository = "https://github.com/rikonaka/xxpdump-rs"
@@ -28,6 +28,6 @@ codegen-units = 1
 lto = true
 
 [features]
-default = []
+default = ["libpnet"]
 libpnet = ["pcapture/pcapng", "pcapture/libpnet"]
 libpcap = ["pcapture/pcapng", "pcapture/libpcap"]
