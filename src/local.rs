@@ -26,21 +26,10 @@ use crate::update_captured_stat;
 
 #[cfg(feature = "libpnet")]
 pub fn capture_local(args: Args) -> Result<()> {
-    let filter = if args.ignore_self_traffic {
-        let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
-        let server_addr = server_addr_split[0];
-        let server_port = server_addr_split[1];
-        // ignore communication with the server
-        let filter = format!("ip!={} and port!={}", server_addr, server_port);
-        filter
+    let filter = if let Some(fl) = &args.filter {
+        fl.clone()
     } else {
         String::new()
-    };
-
-    let filter = if let Some(fu) = &args.filter {
-        format!("{} and ({})", filter, fu)
-    } else {
-        filter
     };
 
     let pbo = PcapByteOrder::WiresharkDefault;
@@ -53,12 +42,11 @@ pub fn capture_local(args: Args) -> Result<()> {
 
     debug!("open save file path");
 
-    let mut split_rule = SplitRule::init(&args)?;
+    let mut split_rule = SplitRule::init(&args, pbo)?;
     let pcapng = cap.gen_pcapng_header(pbo)?;
 
+    // there only SHB and IDB in the generated pcapng header now
     for block in pcapng.blocks {
-        // write all blocks
-        split_rule.write(block.clone(), pbo)?;
         match block {
             GeneralBlock::SectionHeaderBlock(shb) => split_rule.update_shb(shb.clone()),
             GeneralBlock::InterfaceDescriptionBlock(idb) => split_rule.update_idb(idb.clone()),

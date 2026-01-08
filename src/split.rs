@@ -15,10 +15,16 @@ use pcapture::fs::pcapng::SectionHeaderBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::fs::File;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use std::io::Write;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::debug;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
+
+// write after how many packets
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+const WRITE_AFTER_PACKETS: usize = 100;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 /// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
@@ -134,13 +140,28 @@ fn rotate_parser(rotate: &str) -> (u64, &str) {
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug)]
 pub struct SplitRuleNone {
+    blocks: Vec<GeneralBlock>,
     write_fs: File,
+    pbo: PcapByteOrder,
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleNone {
-    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
-        block.write(&mut self.write_fs, pbo)?;
+    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
+        self.blocks.push(block);
+        // call it but not write immediately
+        self.write(false)?;
+        Ok(())
+    }
+    pub fn write(&mut self, write_immediately: bool) -> Result<()> {
+        if self.blocks.len() < WRITE_AFTER_PACKETS && !write_immediately {
+            return Ok(());
+        }
+        let pbo = self.pbo;
+        for block in &self.blocks {
+            block.write(&mut self.write_fs, pbo)?;
+        }
+        self.blocks.clear();
         Ok(())
     }
 }
@@ -153,45 +174,60 @@ pub struct SplitRuleRotate {
     threshold_rotate: u64,
     current_rotate: DateTime<Local>,
     origin_path: String,
+    // write it not immediately
+    pub blocks: Vec<GeneralBlock>,
     pub write_fs: File,
     // {current_prefix}.write_path => next write path
     current_prefix: String,
     prefix_format: String,
+    pbo: PcapByteOrder,
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleRotate {
-    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
-        match block {
-            GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
-                let now = Local::now();
-                let elapsed = now.timestamp() - self.current_rotate.timestamp();
-                if elapsed as u64 >= self.threshold_rotate {
-                    self.current_prefix = now.format(&self.prefix_format).to_string();
-                    let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
-                    let mut fs = File::create(write_path)?;
-
-                    if let Some(shb) = &self.shb {
-                        shb.write(&mut fs, pbo)?;
-                    } else {
-                        panic!("shb not found");
-                    }
-                    if let Some(idbs) = &self.idbs {
-                        for idb in idbs {
-                            idb.write(&mut fs, pbo)?;
-                        }
-                    } else {
-                        panic!("idb not found");
-                    }
-
-                    self.write_fs = fs;
-                    self.current_rotate = now
-                }
-            }
-            _ => (),
+    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
+        self.blocks.push(block);
+        // call it but not write immediately
+        self.write(false)?;
+        Ok(())
+    }
+    pub fn write(&mut self, write_immediately: bool) -> Result<()> {
+        if self.blocks.len() < WRITE_AFTER_PACKETS && !write_immediately {
+            return Ok(());
         }
+        let pbo = self.pbo;
+        for block in &self.blocks {
+            match block {
+                GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
+                    let now = Local::now();
+                    let elapsed = now.timestamp() - self.current_rotate.timestamp();
+                    if elapsed as u64 >= self.threshold_rotate {
+                        self.current_prefix = now.format(&self.prefix_format).to_string();
+                        let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
+                        let mut fs = File::create(write_path)?;
 
-        block.write(&mut self.write_fs, pbo)?;
+                        if let Some(shb) = &self.shb {
+                            shb.write(&mut fs, pbo)?;
+                        } else {
+                            panic!("shb not found");
+                        }
+                        if let Some(idbs) = &self.idbs {
+                            for idb in idbs {
+                                idb.write(&mut fs, pbo)?;
+                            }
+                        } else {
+                            panic!("idb not found");
+                        }
+
+                        self.write_fs = fs;
+                        self.current_rotate = now
+                    }
+                }
+                _ => (),
+            }
+            block.write(&mut self.write_fs, pbo)?;
+        }
+        self.blocks.clear();
         Ok(())
     }
 }
@@ -204,47 +240,63 @@ pub struct SplitRuleFileSize {
     threshold_file_size: u64,
     current_file_size: u64,
     origin_path: String,
+    // write it not immediately
+    pub blocks: Vec<GeneralBlock>,
     pub write_fs: File,
     // {current_prefix + 1}.write_path => next write path
     current_prefix: usize,
     file_count: usize,
+    pbo: PcapByteOrder,
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleFileSize {
-    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
-        match block {
-            GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
-                if self.current_file_size >= self.threshold_file_size {
-                    self.current_prefix += 1;
-                    if self.file_count > 0 && self.current_prefix >= self.file_count {
-                        self.current_prefix = 0;
-                    }
-                    let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
-                    let mut fs = File::create(write_path)?;
-
-                    if let Some(shb) = &self.shb {
-                        shb.write(&mut fs, pbo)?;
-                    } else {
-                        panic!("shb not found");
-                    }
-                    if let Some(idbs) = &self.idbs {
-                        for idb in idbs {
-                            idb.write(&mut fs, pbo)?;
-                        }
-                    } else {
-                        panic!("idb not found");
-                    }
-
-                    self.current_file_size = 0;
-                    self.write_fs = fs;
-                }
-            }
-            _ => (),
+    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
+        self.blocks.push(block);
+        // call it but not write immediately
+        self.write(false)?;
+        Ok(())
+    }
+    pub fn write(&mut self, write_immediately: bool) -> Result<()> {
+        if self.blocks.len() < WRITE_AFTER_PACKETS && !write_immediately {
+            return Ok(());
         }
+        let pbo = self.pbo;
+        for block in &self.blocks {
+            match block {
+                GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
+                    if self.current_file_size >= self.threshold_file_size {
+                        self.current_prefix += 1;
+                        if self.file_count > 0 && self.current_prefix >= self.file_count {
+                            self.current_prefix = 0;
+                        }
+                        let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
+                        let mut fs = File::create(write_path)?;
 
-        block.write(&mut self.write_fs, pbo)?;
-        self.current_file_size += block.size() as u64;
+                        if let Some(shb) = &self.shb {
+                            shb.write(&mut fs, pbo)?;
+                        } else {
+                            panic!("shb not found");
+                        }
+                        if let Some(idbs) = &self.idbs {
+                            for idb in idbs {
+                                idb.write(&mut fs, pbo)?;
+                            }
+                        } else {
+                            panic!("idb not found");
+                        }
+
+                        self.current_file_size = 0;
+                        self.write_fs = fs;
+                    }
+                }
+                _ => (),
+            }
+
+            block.write(&mut self.write_fs, pbo)?;
+            self.current_file_size += block.size() as u64;
+        }
+        self.blocks.clear();
         Ok(())
     }
 }
@@ -257,15 +309,24 @@ pub struct SplieRuleCount {
     threshold_num_packet: usize,
     current_num_packet: usize,
     origin_path: String,
+    // write it not immediatelyly
+    pub blocks: Vec<GeneralBlock>,
     pub write_fs: File,
     // {current_prefix + 1}.write_path => next write path
     current_prefix: usize,
     file_count: usize,
+    pbo: PcapByteOrder,
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplieRuleCount {
-    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
+    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
+        self.blocks.push(block);
+        // call it but not write immediatelyly
+        self.write(false)?;
+        Ok(())
+    }
+    pub fn write(&mut self, write_immediately: bool) -> Result<()> {
         // debug use
         // match block {
         //     GeneralBlock::EnhancedPacketBlock(_) => println!("EPB"),
@@ -275,40 +336,46 @@ impl SplieRuleCount {
         //     GeneralBlock::SectionHeaderBlock(_) => println!("SHB"),
         //     GeneralBlock::SimplePacketBlock(_) => println!("SPB"),
         // }
-        match block {
-            GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
-                if self.current_num_packet >= self.threshold_num_packet {
-                    // panic!("stop");
-                    self.current_prefix += 1;
-                    if self.file_count > 0 && self.current_prefix >= self.file_count {
-                        self.current_prefix = 0;
-                    }
-                    let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
-                    println!("write_path: {}", write_path);
-                    let mut fs = File::create(write_path)?;
-
-                    if let Some(shb) = &self.shb {
-                        shb.write(&mut fs, pbo)?;
-                    } else {
-                        panic!("shb not found");
-                    }
-                    if let Some(idbs) = &self.idbs {
-                        for idb in idbs {
-                            idb.write(&mut fs, pbo)?;
-                        }
-                    } else {
-                        panic!("idb not found");
-                    }
-
-                    self.current_num_packet = 0;
-                    self.write_fs = fs;
-                }
-                self.current_num_packet += 1;
-            }
-            _ => (), // ignore other blocks
+        if self.blocks.len() < WRITE_AFTER_PACKETS && !write_immediately {
+            return Ok(());
         }
+        let pbo = self.pbo;
+        for block in &self.blocks {
+            match block {
+                GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {
+                    if self.current_num_packet >= self.threshold_num_packet {
+                        // panic!("stop");
+                        self.current_prefix += 1;
+                        if self.file_count > 0 && self.current_prefix >= self.file_count {
+                            self.current_prefix = 0;
+                        }
+                        let write_path = format!("{}.{}", self.current_prefix, self.origin_path);
+                        println!("write_path: {}", write_path);
+                        let mut fs = File::create(write_path)?;
 
-        block.write(&mut self.write_fs, pbo)?;
+                        if let Some(shb) = &self.shb {
+                            shb.write(&mut fs, pbo)?;
+                        } else {
+                            panic!("shb not found");
+                        }
+                        if let Some(idbs) = &self.idbs {
+                            for idb in idbs {
+                                idb.write(&mut fs, pbo)?;
+                            }
+                        } else {
+                            panic!("idb not found");
+                        }
+
+                        self.current_num_packet = 0;
+                        self.write_fs = fs;
+                    }
+                    self.current_num_packet += 1;
+                }
+                _ => (), // ignore other blocks
+            }
+            block.write(&mut self.write_fs, pbo)?;
+        }
+        self.blocks.clear();
         Ok(())
     }
 }
@@ -320,76 +387,122 @@ pub enum SplitRule {
     FileSize(SplitRuleFileSize),
     Rotate(SplitRuleRotate),
     None(SplitRuleNone),
+    Print,
+}
+
+impl Drop for SplitRule {
+    fn drop(&mut self) {
+        match self {
+            Self::Count(c) => {
+                c.write(true).expect("final write failed");
+                let _ = c.write_fs.flush();
+            }
+            Self::FileSize(f) => {
+                f.write(true).expect("final write failed");
+                let _ = f.write_fs.flush();
+            }
+            Self::Rotate(r) => {
+                r.write(true).expect("final write failed");
+                let _ = r.write_fs.flush();
+            }
+            Self::None(n) => {
+                n.write(true).expect("final write failed");
+                let _ = n.write_fs.flush();
+            }
+            Self::Print => (),
+        }
+    }
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRule {
-    pub fn init(args: &Args) -> Result<SplitRule> {
+    pub fn init(args: &Args, pbo: PcapByteOrder) -> Result<SplitRule> {
         let path = &args.write;
-        let file_count = args.file_count;
+        if let Some(path) = path {
+            let file_count = args.file_count;
 
-        let count = args.count;
-        let file_size_str = &args.file_size;
-        let rotate_str = &args.rotate;
+            let count = args.count;
+            let file_size_str = &args.file_size;
+            let rotate_str = &args.rotate;
 
-        if let Some(count) = count {
-            let write_path = format!("0.{}", path);
-            let write_fs = File::create(&write_path)?;
-            let src = SplieRuleCount {
-                shb: None,
-                idbs: None,
-                threshold_num_packet: count,
-                current_num_packet: 0,
-                origin_path: path.clone(),
-                write_fs,
-                current_prefix: 0,
-                file_count,
-            };
-            Ok(SplitRule::Count(src))
-        } else if let Some(file_size_str) = file_size_str {
-            let write_path = format!("0.{}", path);
-            let write_fs = File::create(&write_path)?;
-            let file_size = filesize_parser(file_size_str);
-            let spfs = SplitRuleFileSize {
-                shb: None,
-                idbs: None,
-                threshold_file_size: file_size,
-                current_file_size: 0,
-                origin_path: path.clone(),
-                write_fs,
-                current_prefix: 0,
-                file_count,
-            };
-            Ok(SplitRule::FileSize(spfs))
-        } else if let Some(rotate_str) = rotate_str {
-            let current_rotate = Local::now();
-            let (rotate, rotate_format) = rotate_parser(rotate_str);
-            let current_rotate_str = current_rotate.format(rotate_format).to_string();
-            let write_path = format!("{}.{}", current_rotate_str, path);
-            let write_fs = File::create(&write_path)?;
-            let srr = SplitRuleRotate {
-                shb: None,
-                idbs: None,
-                threshold_rotate: rotate,
-                current_rotate,
-                origin_path: path.clone(),
-                write_fs,
-                prefix_format: rotate_format.to_string(),
-                current_prefix: current_rotate_str,
-            };
-            Ok(SplitRule::Rotate(srr))
+            if let Some(count) = count {
+                let write_path = format!("0.{}", path);
+                let write_fs = File::create(&write_path)?;
+                let src = SplieRuleCount {
+                    shb: None,
+                    idbs: None,
+                    threshold_num_packet: count,
+                    current_num_packet: 0,
+                    origin_path: path.clone(),
+                    blocks: Vec::new(),
+                    write_fs,
+                    current_prefix: 0,
+                    file_count,
+                    pbo,
+                };
+                Ok(SplitRule::Count(src))
+            } else if let Some(file_size_str) = file_size_str {
+                let write_path = format!("0.{}", path);
+                let write_fs = File::create(&write_path)?;
+                let file_size = filesize_parser(file_size_str);
+                let spfs = SplitRuleFileSize {
+                    shb: None,
+                    idbs: None,
+                    threshold_file_size: file_size,
+                    current_file_size: 0,
+                    origin_path: path.clone(),
+                    blocks: Vec::new(),
+                    write_fs,
+                    current_prefix: 0,
+                    file_count,
+                    pbo,
+                };
+                Ok(SplitRule::FileSize(spfs))
+            } else if let Some(rotate_str) = rotate_str {
+                let current_rotate = Local::now();
+                let (rotate, rotate_format) = rotate_parser(rotate_str);
+                let current_rotate_str = current_rotate.format(rotate_format).to_string();
+                let write_path = format!("{}.{}", current_rotate_str, path);
+                let write_fs = File::create(&write_path)?;
+                let srr = SplitRuleRotate {
+                    shb: None,
+                    idbs: None,
+                    threshold_rotate: rotate,
+                    current_rotate,
+                    origin_path: path.clone(),
+                    blocks: Vec::new(),
+                    write_fs,
+                    prefix_format: rotate_format.to_string(),
+                    current_prefix: current_rotate_str,
+                    pbo,
+                };
+                Ok(SplitRule::Rotate(srr))
+            } else {
+                let write_fs = File::create(&path)?;
+                let srn = SplitRuleNone {
+                    blocks: Vec::new(),
+                    write_fs,
+                    pbo,
+                };
+                Ok(SplitRule::None(srn))
+            }
         } else {
-            let write_fs = File::create(&path)?;
-            let srn = SplitRuleNone { write_fs };
-            Ok(SplitRule::None(srn))
+            // show the packets on terminal
+            let srp = SplitRule::Print;
+            Ok(srp)
         }
     }
-    pub fn write(&mut self, block: GeneralBlock, pbo: PcapByteOrder) -> Result<()> {
+    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
         match self {
-            Self::Count(c) => c.write(block, pbo),
-            Self::FileSize(f) => f.write(block, pbo),
-            Self::Rotate(r) => r.write(block, pbo),
-            Self::None(n) => n.write(block, pbo),
+            Self::Count(c) => c.append(block),
+            Self::FileSize(f) => f.append(block),
+            Self::Rotate(r) => r.append(block),
+            Self::None(n) => n.append(block),
+            Self::Print => {
+                unimplemented!();
+                // just show the packet info on terminal
+                Ok(())
+            }
         }
     }
     pub fn update_shb(&mut self, shb: SectionHeaderBlock) {
@@ -398,6 +511,7 @@ impl SplitRule {
             Self::FileSize(f) => f.shb = Some(shb),
             Self::Rotate(r) => r.shb = Some(shb),
             Self::None(_) => (),
+            Self::Print => (),
         }
     }
     pub fn update_idb(&mut self, idb: InterfaceDescriptionBlock) {
@@ -424,6 +538,7 @@ impl SplitRule {
                 }
             }
             Self::None(_) => (),
+            Self::Print => (),
         }
     }
 }

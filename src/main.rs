@@ -32,6 +32,8 @@ use tracing::debug;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::info;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use tracing::warn;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing_subscriber::FmtSubscriber;
 
 mod client;
@@ -114,12 +116,12 @@ struct Args {
     mode: String,
 
     /// Print the list of the network interfaces available on the system
-    #[arg(long, alias = "li", action, default_value_t = false)]
+    #[arg(long, alias = "ls", action, default_value_t = false)]
     list_interface: bool,
 
     /// Set the save file path
-    #[arg(short = 'w', long, default_value = "xxpdump.pcapng")]
-    write: String,
+    #[arg(short = 'w', long)]
+    write: Option<String>,
 
     /// Used in conjunction with the -C option, this will limit the number of files created to the specified number, and begin overwriting files from the beginning
     #[arg(short = 'F', long, alias = "fc", default_value_t = 0)]
@@ -307,30 +309,10 @@ fn quitting(mode: &str) {
     std::process::exit(0);
 }
 
-#[cfg(feature = "libpnet")]
 fn print_filter_examples() {
     let examples = vec![
-        "ip=192.168.1.1 and !tcp",
-        "ip!=192.168.1.1 and port!=80",
-        "icmp and ip=192.168.1.1",
-        "icmp and (ip=192.168.1.1 or ip=192.168.1.2)",
-    ];
-    let explains = vec![
-        "Capture packets with IP address 192.168.1.1 and port number 80",
-        "Capture packets with IP address not 192.168.1.1 and port number not 80",
-        "Capture packets with ICMP and IP address 192.168.1.1",
-        "Capture packets with ICMP and IP address 192.168.1.1 or IP address 192.168.1.2",
-    ];
-    for (exa, exp) in zip(examples, explains) {
-        info!("[{}] - {}", exa, exp);
-    }
-}
-
-#[cfg(feature = "libpcap")]
-fn print_filter_examples() {
-    let examples = vec![
-        "host 192.168.1.1 and not tcp",
-        "not host 192.168.1.1 and not port 80",
+        "host 192.168.1.1 and !tcp",
+        "host 192.168.1.1 and port not 80",
         "icmp and host 192.168.1.1",
         "icmp and (host 192.168.1.1 or host 192.168.1.2)",
     ];
@@ -370,6 +352,12 @@ async fn main() -> Result<()> {
     }
 
     info!("working...");
+    #[cfg(feature = "libpnet")]
+    if args.interface == "any" {
+        warn!(
+            "capture interface any not supported on feature 'libpnet', please use feature 'libpcap' or specify a concrete interface name"
+        );
+    }
     match args.mode.as_str() {
         "local" => {
             capture_local(args)?;
