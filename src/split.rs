@@ -340,6 +340,11 @@ impl SplieRuleCount {
             return Ok(());
         }
         let pbo = self.pbo;
+
+        if let Some(shb) = &self.shb {
+            shb.write(&mut self.write_fs, self.pbo)?;
+        }
+
         for block in &self.blocks {
             match block {
                 GeneralBlock::EnhancedPacketBlock(_) | GeneralBlock::SimplePacketBlock(_) => {

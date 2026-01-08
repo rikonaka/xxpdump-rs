@@ -57,7 +57,7 @@ pub fn capture_local(args: Args) -> Result<()> {
     loop {
         match cap.next_as_pcapng() {
             Ok(block) => {
-                split_rule.write(block, pbo)?;
+                split_rule.append(block)?;
                 update_captured_stat();
             }
             Err(e) => warn!("{}", e),
