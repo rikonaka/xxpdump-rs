@@ -15,19 +15,19 @@ chrono = "^0"
 anyhow = "^1"
 tracing = "^0"
 pcapture = "^0"
-subnetwork = "^0"
 tracing-subscriber = "^0"
 clap = { version="^4", features=["derive"] }
 pnet = { version = "^0", features = ["serde"] }
 serde = { version = "^1", features = ["derive"]}
 bincode = { version = "^2", features = ["serde"] }
 tokio = { version = "^1", features = ["full"] }
+regex = "^1"
 
 [profile.release]
 codegen-units = 1
 lto = true
 
 [features]
-default = ["libpnet"]
+default = ["libpcap"]
 libpnet = ["pcapture/pcapng", "pcapture/libpnet"]
 libpcap = ["pcapture/pcapng", "pcapture/libpcap"]

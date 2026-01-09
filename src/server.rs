@@ -1,6 +1,8 @@
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use anyhow::Result;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use anyhow::anyhow;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use bincode::config;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use bincode::config::Configuration;
@@ -20,14 +22,6 @@ use pcapture::fs::pcapng::NameResolutionBlock;
 use pcapture::fs::pcapng::SectionHeaderBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::SimplePacketBlock;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::collections::VecDeque;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::Arc;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::LazyLock;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::Mutex;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncReadExt;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -52,7 +46,7 @@ use crate::PcapNgType;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::split::SplitRule;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::update_captured_stat;
+use crate::update_captured_packets_num;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::update_server_recved_stat;
 
@@ -66,92 +60,83 @@ fn get_server_total_recved() -> usize {
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-static SERVER_PIPE: LazyLock<Arc<Mutex<VecDeque<PcapNgTransport>>>> = LazyLock::new(|| {
-    let v = VecDeque::new();
-    Arc::new(Mutex::new(v))
-});
+fn packet_process(
+    split_rule: &mut SplitRule,
+    config: Configuration,
+    pcapng_t: PcapNgTransport,
+) -> Result<()> {
+    update_captured_packets_num(1);
+    match pcapng_t.p_type {
+        PcapNgType::SectionHeaderBlock => {
+            let decode: (SectionHeaderBlock, usize) =
+                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let (shb, _) = decode;
+            split_rule.update_shb(shb.clone());
 
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-struct ServerPipe;
+            let block = GeneralBlock::SectionHeaderBlock(shb);
+            split_rule.append(block)?;
+        }
+        PcapNgType::InterfaceDescriptionBlock => {
+            let decode: (InterfaceDescriptionBlock, usize) =
+                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let (idb, _) = decode;
+            split_rule.update_idb(idb.clone());
 
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-impl ServerPipe {
-    fn push(pcapng_t: PcapNgTransport) {
-        match SERVER_PIPE.lock() {
-            Ok(mut pipe) => pipe.push_back(pcapng_t),
-            Err(e) => panic!("try to lock the SERVER_PIPE failed: {}", e),
+            let block = GeneralBlock::InterfaceDescriptionBlock(idb);
+            split_rule.append(block)?;
+        }
+        PcapNgType::EnhancedPacketBlock => {
+            let decode: (EnhancedPacketBlock, usize) =
+                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let (epb, _) = decode;
+            let block = GeneralBlock::EnhancedPacketBlock(epb);
+            split_rule.append(block)?;
+        }
+        PcapNgType::SimplePacketBlock => {
+            let decode: (SimplePacketBlock, usize) =
+                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let (spb, _) = decode;
+            let block = GeneralBlock::SimplePacketBlock(spb);
+            split_rule.append(block)?;
+        }
+        PcapNgType::InterfaceStatisticsBlock => {
+            let decode: (InterfaceStatisticsBlock, usize) =
+                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let (isb, _) = decode;
+            let block = GeneralBlock::InterfaceStatisticsBlock(isb);
+            split_rule.append(block)?;
+        }
+        PcapNgType::NameResolutionBlock => {
+            let decode: (NameResolutionBlock, usize) =
+                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let (nrb, _) = decode;
+            let block = GeneralBlock::NameResolutionBlock(nrb);
+            split_rule.append(block)?;
         }
     }
-    fn pop() -> Option<PcapNgTransport> {
-        match SERVER_PIPE.lock() {
-            Ok(mut pipe) => pipe.pop_front(),
-            Err(e) => panic!("try to lock the SERVER_PIPE failed: {}", e),
-        }
-    }
-    fn start(&self, args: &Args, config: Configuration, pbo: PcapByteOrder) {
-        let mut split_rule = SplitRule::init(args).expect("init SplitRule failed");
+    Ok(())
+}
 
-        loop {
-            match Self::pop() {
-                Some(pcapng_t) => {
-                    update_captured_stat();
-                    match pcapng_t.p_type {
-                        PcapNgType::SectionHeaderBlock => {
-                            let decode: (SectionHeaderBlock, usize) =
-                                bincode::decode_from_slice(&pcapng_t.p_data, config)
-                                    .expect("decode shb failed");
-                            let (shb, _) = decode;
-                            split_rule.update_shb(shb.clone());
+async fn recv_packets(socket: &mut TcpStream, args: &Args, pbo: PcapByteOrder) -> Result<()> {
+    let config = config::standard();
+    let mut split_rule = SplitRule::init(args, pbo)?;
 
-                            let block = GeneralBlock::SectionHeaderBlock(shb);
-                            split_rule.write(block, pbo).expect("write shb failed");
-                        }
-                        PcapNgType::InterfaceDescriptionBlock => {
-                            let decode: (InterfaceDescriptionBlock, usize) =
-                                bincode::decode_from_slice(&pcapng_t.p_data, config)
-                                    .expect("decode idb failed");
-                            let (idb, _) = decode;
-                            split_rule.update_idb(idb.clone());
+    loop {
+        let pcapng_t_len = socket.read_u32().await?;
+        let mut buf = vec![0u8; pcapng_t_len as usize];
+        socket.read_exact(&mut buf).await?;
+        let decode: (PcapNgTransport, usize) = bincode::decode_from_slice(&buf, config)?;
 
-                            let block = GeneralBlock::InterfaceDescriptionBlock(idb);
-                            split_rule.write(block, pbo).expect("write idb failed");
-                        }
-                        PcapNgType::EnhancedPacketBlock => {
-                            let decode: (EnhancedPacketBlock, usize) =
-                                bincode::decode_from_slice(&pcapng_t.p_data, config)
-                                    .expect("decode epb failed");
-                            let (epb, _) = decode;
-                            let block = GeneralBlock::EnhancedPacketBlock(epb);
-                            split_rule.write(block, pbo).expect("write epb failed");
-                        }
-                        PcapNgType::SimplePacketBlock => {
-                            let decode: (SimplePacketBlock, usize) =
-                                bincode::decode_from_slice(&pcapng_t.p_data, config)
-                                    .expect("decode spb failed");
-                            let (spb, _) = decode;
-                            let block = GeneralBlock::SimplePacketBlock(spb);
-                            split_rule.write(block, pbo).expect("write spb failed");
-                        }
-                        PcapNgType::InterfaceStatisticsBlock => {
-                            let decode: (InterfaceStatisticsBlock, usize) =
-                                bincode::decode_from_slice(&pcapng_t.p_data, config)
-                                    .expect("decode isb failed");
-                            let (isb, _) = decode;
-                            let block = GeneralBlock::InterfaceStatisticsBlock(isb);
-                            split_rule.write(block, pbo).expect("write isb failed");
-                        }
-                        PcapNgType::NameResolutionBlock => {
-                            let decode: (NameResolutionBlock, usize) =
-                                bincode::decode_from_slice(&pcapng_t.p_data, config)
-                                    .expect("decode nrb failed");
-                            let (nrb, _) = decode;
-                            let block = GeneralBlock::NameResolutionBlock(nrb);
-                            split_rule.write(block, pbo).expect("write irb failed");
-                        }
-                    }
-                }
-                None => (),
-            }
+        let (pcapng_t, decode_len) = decode;
+        if decode_len == pcapng_t_len as usize {
+            // it should equal
+            packet_process(&mut split_rule, config, pcapng_t)?;
+            update_server_recved_stat();
+        } else {
+            error!(
+                "decode_len[{}] != recv_len[{}], ignore this data",
+                decode_len, pcapng_t_len
+            );
         }
     }
 }
@@ -160,38 +145,24 @@ impl ServerPipe {
 struct Server {
     listener: TcpListener,
     server_passwd: String,
+    args: Args,
+    pbo: PcapByteOrder,
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl Server {
-    async fn init(addr: &str, server_passwd: &str) -> Result<Server> {
+    async fn init(args: &Args, pbo: PcapByteOrder) -> Result<Server> {
+        let addr = &args.server_addr;
         let listener = TcpListener::bind(addr).await?;
+        let server_passwd = args.server_passwd.to_string();
         Ok(Server {
             listener,
             server_passwd: server_passwd.to_string(),
+            args: args.clone(),
+            pbo,
         })
     }
-    async fn recv(socket: &mut TcpStream) -> Result<()> {
-        let config = config::standard();
-        loop {
-            let pcapng_t_len = socket.read_u32().await?;
-            let mut buf = vec![0u8; pcapng_t_len as usize];
-            socket.read_exact(&mut buf).await?;
-            let decode: (PcapNgTransport, usize) = bincode::decode_from_slice(&buf, config)?;
 
-            let (pcapng_t, decode_len) = decode;
-            if decode_len == pcapng_t_len as usize {
-                // it should equal
-                ServerPipe::push(pcapng_t);
-                update_server_recved_stat();
-            } else {
-                error!(
-                    "decode_len[{}] != recv_len[{}], ignore this data",
-                    decode_len, pcapng_t_len
-                );
-            }
-        }
-    }
     /// very simple server auth
     async fn auth(&self, socket: &mut TcpStream) -> Result<bool> {
         let recv_len = socket.read_u32().await?;
@@ -219,8 +190,10 @@ impl Server {
             let (mut stream, _addr) = self.listener.accept().await?;
             if self.auth(&mut stream).await? {
                 // the default format is pcapng
+                let args = self.args.clone();
+                let pbo = self.pbo;
                 tokio::spawn(async move {
-                    match Server::recv(&mut stream).await {
+                    match recv_packets(&mut stream, &args, pbo).await {
                         Ok(_) => (),
                         Err(e) => {
                             let server_total_recved = get_server_total_recved();
@@ -228,7 +201,7 @@ impl Server {
                             error!(
                                 "recv pcapng from failed: {}, total recv packet size: {}",
                                 e, server_total_recved
-                            );
+                            )
                         }
                     }
                 });
@@ -239,17 +212,13 @@ impl Server {
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 pub async fn capture_remote_server(args: Args) -> Result<()> {
-    info!("listening at {}", args.server_addr);
-    let server_pip = ServerPipe;
-    let mut server = Server::init(&args.server_addr, &args.server_passwd).await?;
-
-    let config = config::standard();
+    info!("listening at {}", &args.server_addr);
     let pbo = PcapByteOrder::WiresharkDefault;
-    tokio::spawn(async move { server_pip.start(&args, config, pbo) });
+    let mut server = Server::init(&args, pbo).await?;
 
     match server.run().await {
         Ok(_) => (),
-        Err(e) => error!("server run failed: {}", e),
+        Err(e) => return Err(anyhow!("server run failed: {}", e)),
     }
 
     Ok(())

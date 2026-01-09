@@ -8,14 +8,10 @@ use bincode::config::Configuration;
 use pcapture::Capture;
 #[cfg(feature = "libpcap")]
 use pcapture::Device;
-#[cfg(feature = "libpnet")]
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::PcapByteOrder;
-#[cfg(feature = "libpcap")]
-use pcapture::fs::pcapng::EnhancedPacketBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
-#[cfg(feature = "libpcap")]
-use pcapture::fs::pcapng::PcapNg;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncReadExt;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -24,8 +20,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::error;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::warn;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
@@ -34,7 +28,7 @@ use crate::PcapNgTransport;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgType;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::update_captured_stat;
+use crate::update_captured_packets_num;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 struct Client {
@@ -159,16 +153,15 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         for block in pcapng.blocks {
             // shb and idb
             client.send_block(block, config).await?;
-            update_captured_stat();
         }
 
         loop {
             match cap.next_as_pcapng() {
                 Ok(block) => {
                     client.send_block(block, config).await?;
-                    update_captured_stat();
+                    update_captured_packets_num(1);
                 }
-                Err(e) => warn!("{}", e),
+                Err(e) => error!("{}", e),
             }
         }
     } else {
@@ -212,35 +205,22 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
     let mut client = Client::connect(&args.server_addr).await?;
 
     if client.auth(&args.server_passwd).await? {
-        let if_name = &device.name;
-        let if_description = match &device.description {
-            Some(d) => d.clone(),
-            None => String::new(),
-        };
-
-        let ips = &device.addresses;
-        let pcapng = PcapNg::new_raw(&if_name, &if_description, &ips);
-
+        let pbo = PcapByteOrder::WiresharkDefault;
+        let pcapng = cap.gen_pcapng_header(pbo)?;
         for block in pcapng.blocks {
             // shb and idb
             client.send_block(block, config).await?;
-            update_captured_stat();
         }
 
         loop {
-            match cap.fetch() {
-                Ok(packet) => {
-                    for packet_data in packet {
-                        let data = packet_data.data;
-                        let ts_sec = packet_data.tv_sec as u32;
-                        let ts_usec = packet_data.tv_usec as u32;
-                        let eb = EnhancedPacketBlock::new(0, data, args.snaplen, ts_sec, ts_usec)?;
-                        let block = GeneralBlock::EnhancedPacketBlock(eb);
+            match cap.fetch_as_pcapng() {
+                Ok(blocks) => {
+                    update_captured_packets_num(blocks.len());
+                    for block in blocks {
                         client.send_block(block, config).await?;
-                        update_captured_stat();
                     }
                 }
-                Err(e) => warn!("{}", e),
+                Err(e) => error!("{}", e),
             }
         }
     } else {

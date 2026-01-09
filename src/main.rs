@@ -31,7 +31,7 @@ use tracing::Level;
 use tracing::debug;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::info;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+#[cfg(feature = "libpnet")]
 use tracing::warn;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing_subscriber::FmtSubscriber;
@@ -168,11 +168,11 @@ struct PcapNgTransport {
 /* SPLIT LINE */
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn update_captured_stat() {
+fn update_captured_packets_num(num: usize) {
     let mut p = PACKETS_CAPTURED
         .lock()
         .expect("update PACKETS_CAPTURED failed");
-    *p += 1;
+    *p += num;
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]

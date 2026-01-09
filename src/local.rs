@@ -6,8 +6,6 @@ use pcapture::Capture;
 use pcapture::Device;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::PcapByteOrder;
-#[cfg(feature = "libpcap")]
-use pcapture::fs::pcapng::EnhancedPacketBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(feature = "libpcap")]
@@ -22,7 +20,7 @@ use crate::Args;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::split::SplitRule;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::update_captured_stat;
+use crate::update_captured_packets_num;
 
 #[cfg(feature = "libpnet")]
 pub fn capture_local(args: Args) -> Result<()> {
@@ -58,7 +56,7 @@ pub fn capture_local(args: Args) -> Result<()> {
         match cap.next_as_pcapng() {
             Ok(block) => {
                 split_rule.append(block)?;
-                update_captured_stat();
+                update_captured_packets_num(1);
             }
             Err(e) => warn!("{}", e),
         }
@@ -67,8 +65,6 @@ pub fn capture_local(args: Args) -> Result<()> {
 
 #[cfg(feature = "libpcap")]
 pub fn capture_local(args: Args) -> Result<()> {
-    let pbo = PcapByteOrder::WiresharkDefault;
-
     let mut cap = Capture::new(&args.interface)?;
     cap.set_promiscuous(args.promisc);
     cap.set_buffer_size(args.buffer_size);
@@ -94,12 +90,11 @@ pub fn capture_local(args: Args) -> Result<()> {
     }
     let if_name = &args.interface;
 
+    let pbo = PcapByteOrder::WiresharkDefault;
     let pcapng = PcapNg::new_raw(if_name, &if_description, &ips);
-    let mut split_rule = SplitRule::init(&args)?;
+    let mut split_rule = SplitRule::init(&args, pbo)?;
 
     for block in pcapng.blocks {
-        // write all blocks
-        split_rule.write(block.clone(), pbo)?;
         match block {
             GeneralBlock::SectionHeaderBlock(shb) => split_rule.update_shb(shb.clone()),
             GeneralBlock::InterfaceDescriptionBlock(idb) => split_rule.update_idb(idb.clone()),
@@ -108,16 +103,10 @@ pub fn capture_local(args: Args) -> Result<()> {
     }
 
     loop {
-        let packet = cap.fetch()?;
-
-        for packet_data in packet {
-            let data = packet_data.data;
-            let ts_sec = packet_data.tv_sec as u32;
-            let ts_usec = packet_data.tv_usec as u32;
-            let eb = EnhancedPacketBlock::new(0, data, args.snaplen, ts_sec, ts_usec)?;
-            let block = GeneralBlock::EnhancedPacketBlock(eb);
-            split_rule.write(block, pbo)?;
-            update_captured_stat();
+        let blocks = cap.fetch_as_pcapng()?;
+        update_captured_packets_num(blocks.len());
+        for block in blocks {
+            split_rule.append(block)?;
         }
     }
 }
