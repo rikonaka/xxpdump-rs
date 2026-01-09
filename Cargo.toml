@@ -14,7 +14,7 @@ ctrlc = "^3"
 chrono = "^0"
 anyhow = "^1"
 tracing = "^0"
-pcapture = "^0"
+pcapture = { version = "^0", path = "../pcapture-rs" }
 tracing-subscriber = "^0"
 clap = { version="^4", features=["derive"] }
 pnet = { version = "^0", features = ["serde"] }

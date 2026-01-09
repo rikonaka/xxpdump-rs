@@ -100,7 +100,7 @@ struct Args {
     immediate: bool,
 
     /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
-    #[arg(short = 't', long, default_value_t = 0.0)]
+    #[arg(short = 't', long, default_value_t = 0.1)]
     timeout: f32,
 
     /// Set the filter when saving the packet, e.g. --filter ip=192.168.1.1 and port=80, please use --filter-examples to show more examples

@@ -2,14 +2,10 @@
 use anyhow::Result;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::Capture;
-#[cfg(feature = "libpcap")]
-use pcapture::Device;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::PcapByteOrder;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
-#[cfg(feature = "libpcap")]
-use pcapture::fs::pcapng::PcapNg;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tracing::debug;
 #[cfg(feature = "libpnet")]
@@ -75,23 +71,8 @@ pub fn capture_local(args: Args) -> Result<()> {
     }
 
     debug!("open save file path");
-
-    let devices = Device::list()?;
-    let mut ips = Vec::new();
-    let mut if_description = String::new();
-    for device in devices {
-        if device.name == args.interface {
-            ips = device.addresses.clone();
-            if let Some(d) = device.description {
-                if_description = d.clone();
-            }
-            break;
-        }
-    }
-    let if_name = &args.interface;
-
     let pbo = PcapByteOrder::WiresharkDefault;
-    let pcapng = PcapNg::new_raw(if_name, &if_description, &ips);
+    let pcapng = cap.gen_pcapng_header(pbo)?;
     let mut split_rule = SplitRule::init(&args, pbo)?;
 
     for block in pcapng.blocks {
@@ -104,6 +85,7 @@ pub fn capture_local(args: Args) -> Result<()> {
 
     loop {
         let blocks = cap.fetch_as_pcapng()?;
+        println!("XXX: {}", blocks.len());
         update_captured_packets_num(blocks.len());
         for block in blocks {
             split_rule.append(block)?;

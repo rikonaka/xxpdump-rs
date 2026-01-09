@@ -593,7 +593,7 @@ fn print_tcp(msg: &str, src_addr: IpAddr, dst_addr: IpAddr, payload: &[u8]) {
         let tcp_flags = tcp_packet.get_flags();
         let tcp_flags_str = parse_tcp_flag(tcp_flags);
         println!(
-            "{} {}.{} > {}.{} TCP: Flags [{}], seq {}, ack {}, win {}, length {}",
+            "{} {}.{} > {}.{}, TCP: Flags [{}], seq {}, ack {}, win {}, length {}",
             msg,
             src_addr,
             src_port,
@@ -613,7 +613,7 @@ fn print_udp(msg: &str, src_addr: IpAddr, dst_addr: IpAddr, payload: &[u8]) {
         let src_port = udp_packet.get_source();
         let dst_port = udp_packet.get_destination();
         println!(
-            "{} {}.{} > {}.{} UDP: length {}",
+            "{} {}.{} > {}.{}, UDP: length {}",
             msg,
             src_addr,
             src_port,
@@ -627,6 +627,7 @@ fn print_udp(msg: &str, src_addr: IpAddr, dst_addr: IpAddr, payload: &[u8]) {
 fn print_ip(msg: &str, next_level_protocol: EtherType, payload: &[u8]) {
     match next_level_protocol {
         EtherTypes::Ipv4 => {
+            let msg = format!("{} IP:", msg);
             if let Some(ipv4_packet) = Ipv4Packet::new(payload) {
                 let src_ipv4 = ipv4_packet.get_source();
                 let dst_ipv4 = ipv4_packet.get_destination();
@@ -652,6 +653,7 @@ fn print_ip(msg: &str, next_level_protocol: EtherType, payload: &[u8]) {
             }
         }
         EtherTypes::Ipv6 => {
+            let msg = format!("{} IP:", msg);
             if let Some(ipv6_packet) = Ipv6Packet::new(payload) {
                 let src_ip = ipv6_packet.get_source();
                 let dst_ip = ipv6_packet.get_destination();
@@ -673,7 +675,12 @@ fn print_ip(msg: &str, next_level_protocol: EtherType, payload: &[u8]) {
 fn print_ethernet(msg: &str, payload: &[u8]) {
     if let Some(ethernet_packet) = EthernetPacket::new(payload) {
         let next_level_protocol = ethernet_packet.get_ethertype();
-        print_ip(msg, next_level_protocol, ethernet_packet.payload());
+        match next_level_protocol {
+            EtherTypes::Ipv4 | EtherTypes::Ipv6 => {
+                print_ip(msg, next_level_protocol, ethernet_packet.payload())
+            }
+            _ => (),
+        }
     }
 }
 
@@ -693,6 +700,11 @@ fn print_packet(block: GeneralBlock) {
     // 16:04:23.419780 IP 192.168.5.136.50799 > 112.46.2.127.https: Flags [.], ack 164980, win 64240, length 0
     // 16:04:23.419780 IP 192.168.5.136.50796 > 36.110.219.249.https: Flags [.], ack 45260, win 64240, length 0
     // 16:04:23.420987 IP 36.110.219.249.https > 192.168.5.136.50796: Flags [P.], seq 45260:46720, ack 1, win 64240, length 1460
+    // program output:
+    // 22:34:23.838757 IP: 192.168.5.1.50966 > 192.168.5.3.22 TCP: Flags [P.], seq 2709816865, ack 1664830852, win 1018, length 188
+    // 22:34:23.839431 IP: 192.168.5.3.22 > 192.168.5.1.50966 TCP: Flags [P.], seq 1664830852, ack 2709817053, win 9663, length 100
+    // 22:34:23.865925 IP: 192.168.5.1.50966 > 192.168.5.3.22 TCP: Flags [P.], seq 2709817053, ack 1664830952, win 1023, length 172
+    // 22:34:23.866733 IP: 192.168.5.3.22 > 192.168.5.1.50966 TCP: Flags [P.], seq 1664830952, ack 2709817225, win 9663, length 284
     match block {
         GeneralBlock::EnhancedPacketBlock(epb) => {
             let ts_high = epb.ts_high;
