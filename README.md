@@ -8,7 +8,7 @@ The next generation of traffic capture software.
 
 You can download it directly from the release page. Please note that you need to have installed the `npcap` driver on Windows (it will be automatically installed when you install `Wireshark` or `nmap`, or you can download and install it manually, then select `winpcap compatibility mode` when installing).
 
-Because `musl` cannot compile with `libpcap`, and the results compiled with `gnu` cannot be migrated to different Linux distributions, the download interface only provides downloads of musl based on `libpnet` by default. If you want to use `xxpdump` based on `libpcap`, please use the following method to install it.
+Because `musl` cannot compile with `libpcap`, and the results compiled with `gnu` cannot be migrated to different Linux distributions (complex `glibc` version issues), the download page will only provides downloads of `musl` based on `libpnet` by default. If you want to use `xxpdump` based on `libpcap` (more efficient), please use the following commands to install it.
 
 ### Compile and install it yourself (Linux)
 
@@ -18,12 +18,6 @@ You need to install the `libpcap` library on your machine in advance.
 
 ```bash
 cargo install xxpdump --features "libpcap"
-```
-
-#### Libpnet
-
-```bash
-cargo install xxpdump --features "libpnet"
 ```
 
 ### Compile and install it yourself (Windows)
@@ -58,8 +52,9 @@ The classic packet capture software `tcpdump` is outdated.
 
 My reasons are as follows:
 
-* The filter implementation of tcpdump is not very powerful.
 * The tcpdump does not support remote backup traffic.
+* The tcpdump is not memory safe (it is written in C language).
+* The tcpdump does not support modern file format `pcapng` well.
 
 The opportunity for the birth of this software is that I have a server with a small memory and a small hard disk (which means I can't directly back up the traffic on this server and store it locally). I want to try to back up the traffic of this server to a backup server with a large hard disk, but the current tcpdump and other series of software cannot natively support remote transmission backup.
 
