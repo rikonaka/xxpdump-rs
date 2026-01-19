@@ -1239,7 +1239,7 @@ impl PacketPrinter {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.as_str())
                     .collect();
-                let final_msg = new_msg_vec.join("|");
+                let final_msg = new_msg_vec.join("\t");
                 println!("{}", final_msg);
             }
             _ => (),
