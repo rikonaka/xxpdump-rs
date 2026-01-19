@@ -84,7 +84,7 @@ xxpdump -i ens33 -w xxpdump.pcapng
 Capture the traffic and apply filter.
 
 ```bash
-xxpdump -i ens33 -w xxpdump.pcapng -f 'tcp and (ip=192.168.1.1 or ip=192.168.1.2) and dstport=80'
+xxpdump -i ens33 -w xxpdump.pcapng -f 'tcp and (host 192.168.1.1 or host 192.168.1.2) and dst port 80'
 ```
 
 Capture the traffic and split according to time.
