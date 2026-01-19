@@ -968,7 +968,7 @@ impl IpPrinter {
                         ArpOperations::Request => String::from("Request"),
                         _ => format!("{}", operation.0),
                     };
-                    let msg = format!("ARP {} > {} op {}", sender, target, op_str);
+                    let msg = format!("ARP {} > {} op({})", sender, target, op_str);
                     (msg, None)
                 } else {
                     (String::from("BUILD ARP ERROR"), None)
@@ -1239,7 +1239,7 @@ impl PacketPrinter {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.as_str())
                     .collect();
-                let final_msg = new_msg_vec.join("\t");
+                let final_msg = new_msg_vec.join("|");
                 println!("{}", final_msg);
             }
             _ => (),
