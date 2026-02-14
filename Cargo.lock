@@ -557,9 +557,9 @@ dependencies = [
 
 [[package]]
 name = "pcapture"
-version = "0.3.19"
+version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a70678389dece803a7451d87222106503958dad9315809246682917812f7dc98"
+checksum = "e66a774122b6e1e0104257fdc7428440b05d796d1df88ef9ef1554fef5645cd7"
 dependencies = [
  "bindgen",
  "bitcode",
@@ -1222,7 +1222,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "xxpdump"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "bitcode",

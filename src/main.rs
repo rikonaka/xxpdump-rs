@@ -86,7 +86,7 @@ struct Args {
     rotate: Option<String>, // 1S, 1M, 1D .etc
 
     /// Set promiscuous mode on or off
-    #[arg(short = 'p', long, action, default_value_t = true)]
+    #[arg(short = 'p', long, action, default_value_t = false)]
     promisc: bool,
 
     /// Set the buffer size for incoming packet data
@@ -406,6 +406,8 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pcapture::PcapByteOrder;
+    use pcapture::PcapNg;
     #[tokio::test]
     async fn server_run() {
         let itr = vec!["", "--mode", "server", "--rotate", "20s"];
@@ -413,5 +415,15 @@ mod test {
         println!("{}", args.mode);
         println!("{:?}", args.rotate);
         capture_remote_server(args).await.unwrap();
+    }
+    #[test]
+    fn read_block() {
+        let path = "1.pcapng";
+        let pbo = PcapByteOrder::WiresharkDefault;
+        let pcapng = PcapNg::read_all(path, pbo).unwrap();
+        println!("blocks num: {}", pcapng.blocks.len());
+        // for b in pcapng.blocks {
+        //     println!("{:?}", b.name());
+        // }
     }
 }

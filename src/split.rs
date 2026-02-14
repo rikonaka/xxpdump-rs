@@ -558,7 +558,8 @@ impl SplitRule {
             Self::Count(c) => c.shb = Some(shb),
             Self::FileSize(f) => f.shb = Some(shb),
             Self::Rotate(r) => r.shb = Some(shb),
-            _ => (),
+            Self::None(n) => n.shb = Some(shb),
+            Self::Print(_) => (),
         }
     }
     pub fn update_idb(&mut self, idb: InterfaceDescriptionBlock) {
@@ -584,7 +585,14 @@ impl SplitRule {
                     r.idbs = Some(vec![idb]);
                 }
             }
-            _ => (),
+            Self::None(n) => {
+                if let Some(idbs) = &mut n.idbs {
+                    idbs.push(idb);
+                } else {
+                    n.idbs = Some(vec![idb]);
+                }
+            }
+            Self::Print(_) => (),
         }
     }
 }
