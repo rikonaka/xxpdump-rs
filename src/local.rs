@@ -62,9 +62,10 @@ pub fn capture_local(args: Args) -> Result<()> {
 #[cfg(feature = "libpcap")]
 pub fn capture_local(args: Args) -> Result<()> {
     let mut cap = Capture::new(&args.interface)?;
-    cap.set_promiscuous(args.promisc);
+    cap.set_promiscuous_mode(args.promisc);
+    cap.set_immediate_mode(args.immediate);
     cap.set_buffer_size(args.buffer_size);
-    cap.set_snaplen(args.snaplen as i32);
+    cap.set_snaplen(args.snaplen);
     cap.set_timeout((args.timeout * 1000.0) as i32);
     if let Some(filter) = &args.filter {
         cap.set_filter(filter);

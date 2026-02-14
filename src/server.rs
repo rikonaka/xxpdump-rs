@@ -3,9 +3,7 @@ use anyhow::Result;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use anyhow::anyhow;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use bincode::config;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use bincode::config::Configuration;
+use bitcode;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::PcapByteOrder;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -60,16 +58,11 @@ fn get_server_total_recved() -> usize {
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn packet_process(
-    split_rule: &mut SplitRule,
-    config: Configuration,
-    pcapng_t: PcapNgTransport,
-) -> Result<()> {
+fn packet_process(split_rule: &mut SplitRule, pcapng_t: PcapNgTransport) -> Result<()> {
     update_captured_packets_num(1);
     match pcapng_t.p_type {
         PcapNgType::SectionHeaderBlock => {
-            let decode: (SectionHeaderBlock, usize) =
-                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let decode: (SectionHeaderBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
             let (shb, _) = decode;
             split_rule.update_shb(shb.clone());
 
@@ -77,8 +70,7 @@ fn packet_process(
             split_rule.append(block)?;
         }
         PcapNgType::InterfaceDescriptionBlock => {
-            let decode: (InterfaceDescriptionBlock, usize) =
-                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let decode: (InterfaceDescriptionBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
             let (idb, _) = decode;
             split_rule.update_idb(idb.clone());
 
@@ -86,29 +78,25 @@ fn packet_process(
             split_rule.append(block)?;
         }
         PcapNgType::EnhancedPacketBlock => {
-            let decode: (EnhancedPacketBlock, usize) =
-                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let decode: (EnhancedPacketBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
             let (epb, _) = decode;
             let block = GeneralBlock::EnhancedPacketBlock(epb);
             split_rule.append(block)?;
         }
         PcapNgType::SimplePacketBlock => {
-            let decode: (SimplePacketBlock, usize) =
-                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let decode: (SimplePacketBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
             let (spb, _) = decode;
             let block = GeneralBlock::SimplePacketBlock(spb);
             split_rule.append(block)?;
         }
         PcapNgType::InterfaceStatisticsBlock => {
-            let decode: (InterfaceStatisticsBlock, usize) =
-                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let decode: (InterfaceStatisticsBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
             let (isb, _) = decode;
             let block = GeneralBlock::InterfaceStatisticsBlock(isb);
             split_rule.append(block)?;
         }
         PcapNgType::NameResolutionBlock => {
-            let decode: (NameResolutionBlock, usize) =
-                bincode::decode_from_slice(&pcapng_t.p_data, config)?;
+            let decode: (NameResolutionBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
             let (nrb, _) = decode;
             let block = GeneralBlock::NameResolutionBlock(nrb);
             split_rule.append(block)?;
@@ -119,19 +107,18 @@ fn packet_process(
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 async fn recv_packets(socket: &mut TcpStream, args: &Args, pbo: PcapByteOrder) -> Result<()> {
-    let config = config::standard();
     let mut split_rule = SplitRule::init(args, pbo)?;
 
     loop {
         let pcapng_t_len = socket.read_u32().await?;
         let mut buf = vec![0u8; pcapng_t_len as usize];
         socket.read_exact(&mut buf).await?;
-        let decode: (PcapNgTransport, usize) = bincode::decode_from_slice(&buf, config)?;
+        let decode: (PcapNgTransport, usize) = bitcode::decode(&buf)?;
 
         let (pcapng_t, decode_len) = decode;
         if decode_len == pcapng_t_len as usize {
             // it should equal
-            packet_process(&mut split_rule, config, pcapng_t)?;
+            packet_process(&mut split_rule, pcapng_t)?;
             update_server_recved_stat();
         } else {
             error!(

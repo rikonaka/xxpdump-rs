@@ -1,8 +1,8 @@
 use anyhow::Result;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use bincode::Decode;
+use bitcode::Decode;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use bincode::Encode;
+use bitcode::Encode;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use clap::ArgAction;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]

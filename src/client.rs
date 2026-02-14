@@ -1,9 +1,7 @@
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use anyhow::Result;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use bincode;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use bincode::config::Configuration;
+use bitcode;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::Capture;
 #[cfg(feature = "libpcap")]
@@ -44,13 +42,12 @@ impl Client {
     }
 
     /// Client only send data not recv.
-    pub async fn send_block(&mut self, block: GeneralBlock, config: Configuration) -> Result<()> {
+    pub async fn send_block(&mut self, block: GeneralBlock) -> Result<()> {
         async fn send_with_pcapng_transport(
             stream: &mut TcpStream,
             pcapng_t: PcapNgTransport,
-            config: Configuration,
         ) -> Result<()> {
-            let encode_1 = bincode::encode_to_vec(pcapng_t, config)?;
+            let encode_1 = bitcode::encode(&pcapng_t);
             let encode_len = encode_1.len() as u32;
             let encode_2 = encode_len.to_be_bytes(); // BigEndian on internet
 
@@ -62,33 +59,27 @@ impl Client {
         }
 
         let (p_type, p_data) = match block {
-            GeneralBlock::SectionHeaderBlock(shb) => (
-                PcapNgType::SectionHeaderBlock,
-                bincode::encode_to_vec(shb, config)?,
-            ),
-            GeneralBlock::InterfaceDescriptionBlock(idb) => (
-                PcapNgType::InterfaceDescriptionBlock,
-                bincode::encode_to_vec(idb, config)?,
-            ),
-            GeneralBlock::EnhancedPacketBlock(epb) => (
-                PcapNgType::EnhancedPacketBlock,
-                bincode::encode_to_vec(epb, config)?,
-            ),
-            GeneralBlock::SimplePacketBlock(spb) => (
-                PcapNgType::SimplePacketBlock,
-                bincode::encode_to_vec(spb, config)?,
-            ),
-            GeneralBlock::InterfaceStatisticsBlock(isb) => (
-                PcapNgType::InterfaceStatisticsBlock,
-                bincode::encode_to_vec(isb, config)?,
-            ),
-            GeneralBlock::NameResolutionBlock(nrb) => (
-                PcapNgType::NameResolutionBlock,
-                bincode::encode_to_vec(nrb, config)?,
-            ),
+            GeneralBlock::SectionHeaderBlock(shb) => {
+                (PcapNgType::SectionHeaderBlock, bitcode::encode(&shb))
+            }
+            GeneralBlock::InterfaceDescriptionBlock(idb) => {
+                (PcapNgType::InterfaceDescriptionBlock, bitcode::encode(&idb))
+            }
+            GeneralBlock::EnhancedPacketBlock(epb) => {
+                (PcapNgType::EnhancedPacketBlock, bitcode::encode(&epb))
+            }
+            GeneralBlock::SimplePacketBlock(spb) => {
+                (PcapNgType::SimplePacketBlock, bitcode::encode(&spb))
+            }
+            GeneralBlock::InterfaceStatisticsBlock(isb) => {
+                (PcapNgType::InterfaceStatisticsBlock, bitcode::encode(&isb))
+            }
+            GeneralBlock::NameResolutionBlock(nrb) => {
+                (PcapNgType::NameResolutionBlock, bitcode::encode(&nrb))
+            }
         };
         let pcapng_t = PcapNgTransport { p_type, p_data };
-        send_with_pcapng_transport(&mut self.stream, pcapng_t, config).await?;
+        send_with_pcapng_transport(&mut self.stream, pcapng_t).await?;
         Ok(())
     }
     /// Very simple auth function.
@@ -146,19 +137,18 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
     cap.set_filter(&filter)?;
 
     let pbo = PcapByteOrder::WiresharkDefault; // default
-    let config = bincode::config::standard();
     let mut client = Client::connect(&args.server_addr).await?;
     if client.auth(&args.server_passwd).await? {
         let pcapng = cap.gen_pcapng_header(pbo)?;
         for block in pcapng.blocks {
             // shb and idb
-            client.send_block(block, config).await?;
+            client.send_block(block).await?;
         }
 
         loop {
             match cap.next_as_pcapng() {
                 Ok(block) => {
-                    client.send_block(block, config).await?;
+                    client.send_block(block).await?;
                     update_captured_packets_num(1);
                 }
                 Err(e) => error!("{}", e),
@@ -195,13 +185,13 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         String::new()
     };
 
-    cap.set_promiscuous(args.promisc);
+    cap.set_promiscuous_mode(args.promisc);
     cap.set_buffer_size(args.buffer_size);
-    cap.set_snaplen(args.snaplen as i32);
+    cap.set_snaplen(args.snaplen);
+    cap.set_immediate_mode(args.immediate);
     cap.set_timeout((args.timeout * 1000.0) as i32);
     cap.set_filter(&filter);
 
-    let config = bincode::config::standard();
     let mut client = Client::connect(&args.server_addr).await?;
 
     if client.auth(&args.server_passwd).await? {
@@ -209,7 +199,7 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
         let pcapng = cap.gen_pcapng_header(pbo)?;
         for block in pcapng.blocks {
             // shb and idb
-            client.send_block(block, config).await?;
+            client.send_block(block).await?;
         }
 
         loop {
@@ -217,7 +207,7 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
                 Ok(blocks) => {
                     update_captured_packets_num(blocks.len());
                     for block in blocks {
-                        client.send_block(block, config).await?;
+                        client.send_block(block).await?;
                     }
                 }
                 Err(e) => error!("{}", e),
