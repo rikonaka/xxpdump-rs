@@ -14,12 +14,12 @@ ctrlc = "3.5.2"
 regex = "1.12.3"
 chrono = "0.4.43"
 anyhow = "1.0.101"
-pcapture = "0.3.22"
+pcapture = "0.3.23"
 clap = { version="4.5.58", features=["derive"] }
-pnet = { version = "0.35.0", features = ["serde"] }
-tokio = { version = "1.49.0", features = ["full"] }
-serde = { version = "1.0.228", features = ["derive"] }
-bitcode = { version = "0.6.9", features = ["serde"] }
+pnet = { version="0.35.0", features=["serde"] }
+tokio = { version="1.49.0", features=["full"] }
+serde = { version="1.0.228", features=["derive"] }
+bitcode = { version="0.6.9", features=["serde"] }
 
 [profile.release]
 codegen-units = 1

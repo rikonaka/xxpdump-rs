@@ -25,6 +25,8 @@ use std::iter::zip;
 use std::sync::atomic::AtomicBool;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::atomic::Ordering;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use std::time::Instant;
 
 mod client;
 mod local;
@@ -85,6 +87,10 @@ struct Args {
     /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
     #[arg(short = 'T', long, default_value_t = 0.1)]
     timeout: f32,
+
+    /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
+    #[arg(short = 'N', long, action, default_value_t = false)]
+    nonblock: bool,
 
     /// Set the filter when saving the packet, e.g. --filter ip=192.168.1.1 and port=80, please use --filter-examples to show more examples
     #[arg(short = 'f', long)]
@@ -248,12 +254,6 @@ fn list_interface() -> Result<()> {
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn quitting() {
-    println!("stop capturing...");
-    SHOULD_EXIT.store(true, Ordering::SeqCst);
-}
-
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn print_filter_examples() {
     let examples = vec![
         "host 192.168.1.1 and !tcp",
@@ -277,8 +277,37 @@ fn print_filter_examples() {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    let mut start: Option<Instant> = None;
     ctrlc::set_handler(move || {
-        quitting();
+        println!("stop capturing...");
+
+        match start {
+            Some(start) => {
+                let elapsed = start.elapsed().as_secs_f32();
+                if elapsed > 1.5 {
+                    let mut msg = String::new();
+                    msg += ">>> ";
+                    msg += &format!("its takes too long to stop: {:.2} seconds\n", elapsed);
+                    msg += ">>> ";
+                    msg += &format!("this is normally caused by libpcap's dispatch function (it is blocking) when there no traffic\n");
+                    msg += ">>> ";
+                    msg += &format!("if you wish, you can manually send some traffic that can be captured by xxpdump to end the wait\n");
+                    msg += ">>> ";
+                    msg += &format!("note that forcibly exiting now will result in the loss of captured packets (tcpdump also has this problem)\n");
+                    msg += ">>> ";
+                    msg += &format!("please set -N for nonblock mode next time if you want to stop it immediately\n");
+                    msg += ">>> ";
+                    msg += &format!("but this may cause higher CPU usage when capture traffic is heavy\n");
+                    println!("{}", msg);
+                }
+            }
+            None => {
+                // Set when first press ctrl-c,
+                // this is used to calculate the elapsed time when second press ctrl-c.
+                start = Some(Instant::now());
+            }
+        }
+        SHOULD_EXIT.store(true, Ordering::SeqCst);
     })
     .expect("error setting ctrl+c handler");
 

@@ -542,9 +542,9 @@ dependencies = [
 
 [[package]]
 name = "pcapture"
-version = "0.3.22"
+version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "747d7b255a6c9c6e096d19d65098b2d0c16c8bc1b90a46fd5679d890dff40624"
+checksum = "b7968f213f56b84f76cfaa15349af61b97be5dbf4ceceef1a99b3bad3d123f95"
 dependencies = [
  "bindgen",
  "bitcode",

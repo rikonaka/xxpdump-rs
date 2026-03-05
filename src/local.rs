@@ -67,6 +67,7 @@ pub fn capture_local(args: Args) -> Result<()> {
     cap.set_buffer_size(args.buffer_size);
     cap.set_snaplen(args.snaplen);
     cap.set_timeout((args.timeout * 1000.0) as i32);
+    cap.set_nonblock(args.nonblock);
     if let Some(filter) = &args.filter {
         cap.set_filter(filter);
     }
