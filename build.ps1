@@ -1,1 +1,1 @@
-cargo build --release --target x86_64-pc-windows-msvc --features libpnet
+cargo build --release --target x86_64-pc-windows-msvc --features libpnet --no-default-features
