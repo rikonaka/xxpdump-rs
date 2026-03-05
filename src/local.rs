@@ -7,16 +7,14 @@ use pcapture::PcapByteOrder;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::debug;
-#[cfg(feature = "libpnet")]
-use tracing::warn;
+use std::sync::atomic::Ordering;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::split::SplitRule;
+use crate::SHOULD_EXIT;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::update_captured_packets_num;
+use crate::split::SplitRule;
 
 #[cfg(feature = "libpnet")]
 pub fn capture_local(args: Args) -> Result<()> {
@@ -34,8 +32,6 @@ pub fn capture_local(args: Args) -> Result<()> {
     cap.set_timeout(args.timeout);
     cap.set_filter(&filter)?;
 
-    debug!("open save file path");
-
     let mut split_rule = SplitRule::init(&args, pbo)?;
     let pcapng = cap.gen_pcapng_header(pbo)?;
 
@@ -48,15 +44,19 @@ pub fn capture_local(args: Args) -> Result<()> {
         }
     }
 
-    loop {
+    let mut total_recved = 0;
+    while !SHOULD_EXIT.load(Ordering::SeqCst) {
         match cap.next_as_pcapng() {
             Ok(block) => {
+                total_recved += 1;
                 split_rule.append(block)?;
-                update_captured_packets_num(1);
             }
-            Err(e) => warn!("capture next as pcapng error: {}", e),
+            Err(_e) => (), // ignore the error, just try to capture the next packet
         }
     }
+
+    println!("total captured packet: {}", total_recved);
+    Ok(())
 }
 
 #[cfg(feature = "libpcap")]
@@ -71,7 +71,6 @@ pub fn capture_local(args: Args) -> Result<()> {
         cap.set_filter(filter);
     }
 
-    debug!("open save file path");
     let pbo = PcapByteOrder::WiresharkDefault;
     let pcapng = cap.gen_pcapng_header(pbo)?;
     let mut split_rule = SplitRule::init(&args, pbo)?;
@@ -84,13 +83,17 @@ pub fn capture_local(args: Args) -> Result<()> {
         }
     }
 
-    loop {
+    let mut total_recved = 0;
+    while !SHOULD_EXIT.load(Ordering::SeqCst) {
         let blocks = cap.fetch_as_pcapng()?;
-        update_captured_packets_num(blocks.len());
+        total_recved += blocks.len();
         for block in blocks {
             split_rule.append(block)?;
         }
     }
+
+    println!("total captured packet: {}", total_recved);
+    Ok(())
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]

@@ -56,15 +56,13 @@ use std::collections::HashMap;
 use std::fs::File;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::net::IpAddr;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::debug;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
 
 // write after how many packets
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-const WRITE_AFTER_PACKETS: usize = 100;
+const WRITE_AFTER: usize = 100;
 
 /// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -101,7 +99,6 @@ fn parse_bytes(file_size: &str) -> Result<u64> {
                 return Err(anyhow!("wrong unit [{}]", unit_str));
             }
         };
-        debug!("finial size [{}] bytes", final_size);
         return Ok(final_size);
     } else {
         return Err(anyhow!("wrong size parameter [{}]", file_size));
@@ -150,7 +147,6 @@ fn parse_rotate(rotate: &str) -> Result<(u64, &str)> {
                 return Err(anyhow!("wrong unit [{unit_str}]"));
             }
         };
-        debug!("finial rotate [{final_rotate}] secs");
         Ok((final_rotate, format_str))
     } else {
         return Err(anyhow!("wrong rotate parameter [{rotate}]"));
@@ -178,9 +174,10 @@ impl SplitRuleNone {
         Ok(())
     }
     pub fn write(&mut self, write_immediately: bool) -> Result<()> {
-        if self.blocks.len() < WRITE_AFTER_PACKETS && !write_immediately {
+        if self.blocks.len() < WRITE_AFTER && !write_immediately {
             return Ok(());
         }
+
         // only write header once
         if self.write_header {
             if let Some(shb) = &self.shb {
@@ -228,7 +225,7 @@ impl SplitRuleRotate {
         Ok(())
     }
     pub fn write(&mut self, write_immediately: bool) -> Result<()> {
-        if self.blocks.len() < WRITE_AFTER_PACKETS && !write_immediately {
+        if self.blocks.len() < WRITE_AFTER && !write_immediately {
             return Ok(());
         }
 
@@ -294,9 +291,10 @@ impl SplitRuleFileSize {
         Ok(())
     }
     pub fn write(&mut self, write_immediately: bool) -> Result<()> {
-        if self.blocks.len() < WRITE_AFTER_PACKETS && !write_immediately {
+        if self.blocks.len() < WRITE_AFTER && !write_immediately {
             return Ok(());
         }
+
         if self.last_size >= self.threshold_size {
             self.prefix += 1;
             if self.file_count > 0 && self.prefix >= self.file_count {
@@ -358,7 +356,7 @@ impl SplieRuleCount {
         Ok(())
     }
     pub fn write(&mut self, write_immediately: bool) -> Result<()> {
-        if self.blocks.len() < WRITE_AFTER_PACKETS && !write_immediately {
+        if self.blocks.len() < WRITE_AFTER && !write_immediately {
             return Ok(());
         }
 

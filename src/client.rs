@@ -11,13 +11,13 @@ use pcapture::PcapByteOrder;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::GeneralBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use std::sync::atomic::Ordering;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncReadExt;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncWriteExt;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::net::TcpStream;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::error;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
@@ -26,7 +26,7 @@ use crate::PcapNgTransport;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgType;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::update_captured_packets_num;
+use crate::SHOULD_EXIT;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 struct Client {
@@ -145,17 +145,21 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
             client.send_block(block).await?;
         }
 
-        loop {
+        let mut total_recved = 0;
+        while !SHOULD_EXIT.load(Ordering::SeqCst) {
             match cap.next_as_pcapng() {
                 Ok(block) => {
+                    total_recved += 1;
                     client.send_block(block).await?;
-                    update_captured_packets_num(1);
                 }
-                Err(e) => error!("{}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
+
+        println!("total captured packet: {}", total_recved);
+        Ok(())
     } else {
-        error!("password is wrong");
+        eprintln!("password is wrong");
         Ok(())
     }
 }
@@ -167,7 +171,7 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
     let device = match device {
         Some(d) => d,
         None => {
-            error!("cannot find the interface: {}", args.interface);
+            eprintln!("cannot find the interface: {}", args.interface);
             return Ok(());
         }
     };
@@ -202,19 +206,23 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
             client.send_block(block).await?;
         }
 
-        loop {
+        let mut total_recved = 0;
+        while !SHOULD_EXIT.load(Ordering::SeqCst) {
             match cap.fetch_as_pcapng() {
                 Ok(blocks) => {
-                    update_captured_packets_num(blocks.len());
+                    total_recved += blocks.len();
                     for block in blocks {
                         client.send_block(block).await?;
                     }
                 }
-                Err(e) => error!("{}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
+
+        println!("total captured packet: {}", total_recved);
+        Ok(())
     } else {
-        error!("password is wrong");
+        eprintln!("password is wrong");
         Ok(())
     }
 }

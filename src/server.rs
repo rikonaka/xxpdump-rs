@@ -21,6 +21,8 @@ use pcapture::fs::pcapng::SectionHeaderBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::SimplePacketBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use std::sync::atomic::Ordering;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncReadExt;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncWriteExt;
@@ -28,38 +30,20 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::net::TcpStream;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::error;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::info;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::Args;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::PACKETS_SERVER_TOTAL_RECVED;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgTransport;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgType;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use crate::SHOULD_EXIT;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::split::SplitRule;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::update_captured_packets_num;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::update_server_recved_stat;
-
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn get_server_total_recved() -> usize {
-    let packets_server_recved = match PACKETS_SERVER_TOTAL_RECVED.lock() {
-        Ok(p) => *p,
-        Err(e) => panic!("try to lock the PACKETS_SERVER_TOTAL_RECVED failed: {}", e),
-    };
-    packets_server_recved
-}
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn packet_process(split_rule: &mut SplitRule, pcapng_t: PcapNgTransport) -> Result<()> {
-    update_captured_packets_num(1);
     match pcapng_t.p_type {
         PcapNgType::SectionHeaderBlock => {
             let decode: (SectionHeaderBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
@@ -108,25 +92,29 @@ fn packet_process(split_rule: &mut SplitRule, pcapng_t: PcapNgTransport) -> Resu
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 async fn recv_packets(socket: &mut TcpStream, args: &Args, pbo: PcapByteOrder) -> Result<()> {
     let mut split_rule = SplitRule::init(args, pbo)?;
+    let mut total_recved = 0;
 
-    loop {
+    while !SHOULD_EXIT.load(Ordering::SeqCst) {
         let pcapng_t_len = socket.read_u32().await?;
         let mut buf = vec![0u8; pcapng_t_len as usize];
         socket.read_exact(&mut buf).await?;
         let decode: (PcapNgTransport, usize) = bitcode::decode(&buf)?;
+        total_recved += 1;
 
         let (pcapng_t, decode_len) = decode;
         if decode_len == pcapng_t_len as usize {
             // it should equal
             packet_process(&mut split_rule, pcapng_t)?;
-            update_server_recved_stat();
         } else {
-            error!(
+            eprintln!(
                 "decode_len[{}] != recv_len[{}], ignore this data",
                 decode_len, pcapng_t_len
             );
         }
     }
+
+    println!("server total recved packet: {}", total_recved);
+    Ok(())
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -174,7 +162,7 @@ impl Server {
         }
     }
     async fn run(&mut self) -> Result<()> {
-        loop {
+        while !SHOULD_EXIT.load(Ordering::SeqCst) {
             let (mut stream, _addr) = self.listener.accept().await?;
             if self.auth(&mut stream).await? {
                 // the default format is pcapng
@@ -184,23 +172,20 @@ impl Server {
                     match recv_packets(&mut stream, &args, pbo).await {
                         Ok(_) => (),
                         Err(e) => {
-                            let server_total_recved = get_server_total_recved();
                             // ignore the error and keep running
-                            error!(
-                                "recv pcapng from failed: {}, total recv packet size: {}",
-                                e, server_total_recved
-                            )
+                            eprintln!("recv pcapng from failed: {}", e)
                         }
                     }
                 });
             }
         }
+        Ok(())
     }
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 pub async fn capture_remote_server(args: Args) -> Result<()> {
-    info!("listening at {}", &args.server_addr);
+    println!("listening at {}", &args.server_addr);
     let pbo = PcapByteOrder::WiresharkDefault;
     let mut server = Server::init(&args, pbo).await?;
 

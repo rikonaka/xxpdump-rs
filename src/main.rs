@@ -22,21 +22,9 @@ use serde::Serialize;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::iter::zip;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::LazyLock;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::Mutex;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::Level;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::debug;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing::info;
-#[cfg(feature = "libpnet")]
-use tracing::warn;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use tracing_subscriber::FmtSubscriber;
+use std::sync::atomic::Ordering;
 
 mod client;
 mod local;
@@ -49,13 +37,6 @@ use client::capture_remote_client;
 use local::capture_local;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use server::capture_remote_server;
-
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-static PACKETS_SERVER_TOTAL_RECVED: LazyLock<Arc<Mutex<usize>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(0)));
-
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-static PACKETS_CAPTURED: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 // The default is 65535. This should always be larger than the snaplen.
@@ -179,43 +160,9 @@ struct PcapNgTransport {
     pub p_data: Vec<u8>,
 }
 
-/* SPLIT LINE */
-
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn update_captured_packets_num(num: usize) {
-    let mut p = PACKETS_CAPTURED
-        .lock()
-        .expect("update PACKETS_CAPTURED failed");
-    *p += num;
-}
-
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn update_server_recved_stat() {
-    let mut p = PACKETS_SERVER_TOTAL_RECVED
-        .lock()
-        .expect("update PACKETS_SERVER_TOTAL_RECVED failed");
-    *p += 1;
-}
-
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn init_log_level(log_level: &str) {
-    let level = match log_level {
-        "info" => Level::INFO,
-        "debug" => Level::DEBUG,
-        _ => panic!(
-            "unknown log level [{}], valid parameters are 'info' and 'debug'",
-            log_level
-        ),
-    };
-
-    let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
-    tracing::subscriber::set_global_default(subscriber).expect("failed to set subscriber");
-}
-
 #[cfg(feature = "libpnet")]
 fn list_interface() -> Result<()> {
     let devices = Device::list()?;
-    debug!("init devices list done");
 
     let mut info = Vec::new();
     for device in devices {
@@ -258,7 +205,6 @@ fn list_interface() -> Result<()> {
 #[cfg(feature = "libpcap")]
 fn list_interface() -> Result<()> {
     let devices = Device::list()?;
-    debug!("init devices list done");
 
     let mut info = Vec::new();
     for device in devices {
@@ -299,28 +245,12 @@ fn list_interface() -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn quitting(mode: &str) {
-    info!("quitting...");
-    match mode {
-        "local" | "client" => {
-            let packets_captured: usize = match PACKETS_CAPTURED.lock() {
-                Ok(p) => *p,
-                Err(e) => panic!("try to lock the PACKETS_CAPTURED failed: {}", e),
-            };
-            info!("packets captured [{}]", packets_captured);
-        }
-        "server" => {
-            let total_recved: usize = match PACKETS_SERVER_TOTAL_RECVED.lock() {
-                Ok(p) => *p,
-                Err(e) => panic!("try to lock the PACKETS_SERVER_TOTAL_RECVED failed: {}", e),
-            };
-            info!("packets server recved [{}]", total_recved);
-        }
-        _ => (),
-    }
+static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
-    std::process::exit(0);
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+fn quitting() {
+    println!("stop capturing...");
+    SHOULD_EXIT.store(true, Ordering::SeqCst);
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -338,7 +268,7 @@ fn print_filter_examples() {
         "Capture packets with ICMP and IP address 192.168.1.1 or IP address 192.168.1.2",
     ];
     for (exa, exp) in zip(examples, explains) {
-        info!("[{}] - {}", exa, exp);
+        println!("[{}] - {}", exa, exp);
     }
 }
 
@@ -347,50 +277,47 @@ fn print_filter_examples() {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let mode = args.mode.clone();
     ctrlc::set_handler(move || {
-        quitting(&mode);
+        quitting();
     })
     .expect("error setting ctrl+c handler");
 
-    init_log_level(&args.log_level);
-    debug!("init args done");
-
     if args.list_interface {
         list_interface()?;
-        std::process::exit(0);
-    }
-
-    if args.filter_examples {
+    } else if args.filter_examples {
         print_filter_examples();
-        std::process::exit(0);
-    }
-
-    info!("working...");
-
-    match args.mode.as_str() {
-        "local" => {
-            #[cfg(feature = "libpnet")]
-            if args.interface == "any" {
-                warn!(
-                    "capture interface any not supported on feature 'libpnet', please use feature 'libpcap' or specify a concrete interface name"
-                );
+    } else {
+        println!("working...");
+        match args.mode.as_str() {
+            "local" => {
+                #[cfg(feature = "libpnet")]
+                if args.interface == "any" {
+                    eprintln!(
+                        "capture interface any not supported on feature 'libpnet', please use feature 'libpcap' or specify a concrete interface name"
+                    );
+                } else {
+                    capture_local(args)?;
+                }
+                #[cfg(feature = "libpcap")]
+                capture_local(args)?;
             }
-            capture_local(args)?;
-        }
-        "client" => {
-            #[cfg(feature = "libpnet")]
-            if args.interface == "any" {
-                warn!(
-                    "capture interface any not supported on feature 'libpnet', please use feature 'libpcap' or specify a concrete interface name"
-                );
+            "client" => {
+                #[cfg(feature = "libpnet")]
+                if args.interface == "any" {
+                    eprintln!(
+                        "capture interface any not supported on feature 'libpnet', please use feature 'libpcap' or specify a concrete interface name"
+                    );
+                } else {
+                    capture_remote_client(args).await?;
+                }
+                #[cfg(feature = "libpcap")]
+                capture_remote_client(args).await?;
             }
-            capture_remote_client(args).await?;
+            "server" => {
+                capture_remote_server(args).await?;
+            }
+            _ => panic!("unsupported mode"),
         }
-        "server" => {
-            capture_remote_server(args).await?;
-        }
-        _ => panic!("unsupported mode"),
     }
 
     Ok(())
