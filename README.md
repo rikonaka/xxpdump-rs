@@ -14,7 +14,13 @@ Because `musl` cannot compile with `libpcap`, and the results compiled with `gnu
 
 #### Libpcap
 
-You need to install the `libpcap` library on your machine in advance.
+You need to install the `libpcap` library (at least version `1.10`) and `libclang` on your machine in advance.
+
+For Debian/Ubuntu:
+
+```bash
+sudo apt install libpcap-dev libclang-dev
+```
 
 ```bash
 cargo install xxpdump --features "libpcap"
