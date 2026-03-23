@@ -21,7 +21,9 @@ use pcapture::fs::pcapng::SectionHeaderBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::SimplePacketBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::atomic::Ordering;
+use std::sync::atomic::AtomicUsize;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use std::sync::atomic::Ordering::SeqCst;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use tokio::io::AsyncReadExt;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -38,50 +40,42 @@ use crate::PcapNgTransport;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::PcapNgType;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::SHOULD_EXIT;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::split::SplitRule;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn packet_process(split_rule: &mut SplitRule, pcapng_t: PcapNgTransport) -> Result<()> {
     match pcapng_t.p_type {
         PcapNgType::SectionHeaderBlock => {
-            let decode: (SectionHeaderBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
-            let (shb, _) = decode;
+            let shb: SectionHeaderBlock = bitcode::decode(&pcapng_t.p_data)?;
             split_rule.update_shb(shb.clone());
 
             let block = GeneralBlock::SectionHeaderBlock(shb);
             split_rule.append(block)?;
         }
         PcapNgType::InterfaceDescriptionBlock => {
-            let decode: (InterfaceDescriptionBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
-            let (idb, _) = decode;
+            let idb: InterfaceDescriptionBlock = bitcode::decode(&pcapng_t.p_data)?;
             split_rule.update_idb(idb.clone());
 
             let block = GeneralBlock::InterfaceDescriptionBlock(idb);
             split_rule.append(block)?;
         }
         PcapNgType::EnhancedPacketBlock => {
-            let decode: (EnhancedPacketBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
-            let (epb, _) = decode;
+            let epb: EnhancedPacketBlock = bitcode::decode(&pcapng_t.p_data)?;
             let block = GeneralBlock::EnhancedPacketBlock(epb);
             split_rule.append(block)?;
         }
         PcapNgType::SimplePacketBlock => {
-            let decode: (SimplePacketBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
-            let (spb, _) = decode;
+            let spb: SimplePacketBlock = bitcode::decode(&pcapng_t.p_data)?;
             let block = GeneralBlock::SimplePacketBlock(spb);
             split_rule.append(block)?;
         }
         PcapNgType::InterfaceStatisticsBlock => {
-            let decode: (InterfaceStatisticsBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
-            let (isb, _) = decode;
+            let isb: InterfaceStatisticsBlock = bitcode::decode(&pcapng_t.p_data)?;
             let block = GeneralBlock::InterfaceStatisticsBlock(isb);
             split_rule.append(block)?;
         }
         PcapNgType::NameResolutionBlock => {
-            let decode: (NameResolutionBlock, usize) = bitcode::decode(&pcapng_t.p_data)?;
-            let (nrb, _) = decode;
+            let nrb: NameResolutionBlock = bitcode::decode(&pcapng_t.p_data)?;
             let block = GeneralBlock::NameResolutionBlock(nrb);
             split_rule.append(block)?;
         }
@@ -90,31 +84,33 @@ fn packet_process(split_rule: &mut SplitRule, pcapng_t: PcapNgTransport) -> Resu
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+pub static SERVRE_TOTAL_RECVED: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 async fn recv_packets(socket: &mut TcpStream, args: &Args, pbo: PcapByteOrder) -> Result<()> {
     let mut split_rule = SplitRule::init(args, pbo)?;
-    let mut total_recved = 0;
 
-    while !SHOULD_EXIT.load(Ordering::SeqCst) {
+    loop {
         let pcapng_t_len = socket.read_u32().await?;
-        let mut buf = vec![0u8; pcapng_t_len as usize];
-        socket.read_exact(&mut buf).await?;
-        let decode: (PcapNgTransport, usize) = bitcode::decode(&buf)?;
-        total_recved += 1;
+        println!("recv a block from client, length: {}", pcapng_t_len);
+        let mut buff = vec![0u8; pcapng_t_len as usize];
+        socket.read_exact(&mut buff).await?;
+        println!(
+            "data: {}",
+            buff.iter()
+                .map(|x| format!("{:02x}", x))
+                .collect::<Vec<String>>()
+                .join("")
+        );
+        println!("recv block data from client, start to decode...");
+        let pcapng_t: PcapNgTransport = bitcode::decode(&buff)?;
+        println!("decode block data from client, start to process...");
 
-        let (pcapng_t, decode_len) = decode;
-        if decode_len == pcapng_t_len as usize {
-            // it should equal
-            packet_process(&mut split_rule, pcapng_t)?;
-        } else {
-            eprintln!(
-                "decode_len[{}] != recv_len[{}], ignore this data",
-                decode_len, pcapng_t_len
-            );
-        }
+        packet_process(&mut split_rule, pcapng_t)?;
+        SERVRE_TOTAL_RECVED.fetch_add(1, SeqCst);
+
+        println!("recv and process a block from client successfully");
     }
-
-    println!("server total recved packet: {}", total_recved);
-    Ok(())
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -143,10 +139,10 @@ impl Server {
     async fn auth(&self, socket: &mut TcpStream) -> Result<bool> {
         let recv_len = socket.read_u32().await?;
 
-        let mut buf = vec![0u8; recv_len as usize];
-        let _ = socket.read_exact(&mut buf).await?;
+        let mut buff = vec![0u8; recv_len as usize];
+        let _passwd_len = socket.read_exact(&mut buff).await?;
 
-        let cliend_send_passwd = String::from_utf8_lossy(&buf).to_string();
+        let cliend_send_passwd = String::from_utf8_lossy(&buff).to_string();
         if cliend_send_passwd == self.server_passwd {
             let auth_success_ret = "ok";
             let auth_success_ret_vec = auth_success_ret.as_bytes();
@@ -162,7 +158,7 @@ impl Server {
         }
     }
     async fn run(&mut self) -> Result<()> {
-        while !SHOULD_EXIT.load(Ordering::SeqCst) {
+        loop {
             let (mut stream, _addr) = self.listener.accept().await?;
             if self.auth(&mut stream).await? {
                 // the default format is pcapng
@@ -179,7 +175,6 @@ impl Server {
                 });
             }
         }
-        Ok(())
     }
 }
 

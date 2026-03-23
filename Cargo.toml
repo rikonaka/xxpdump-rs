@@ -1,6 +1,6 @@
 [package]
 name = "xxpdump"
-version = "0.4.7"
+version = "0.4.8"
 authors = ["RikoNaka <xxy1836@gmail.com>"]
 description = "The next generation of traffic capture software"
 repository = "https://github.com/rikonaka/xxpdump-rs"
@@ -15,6 +15,7 @@ regex = "1.12.3"
 chrono = "0.4.43"
 anyhow = "1.0.101"
 pcapture = "0.3.23"
+# pcapture = { version="0.3.23", path="../pcapture-rs" }
 clap = { version="4.5.58", features=["derive"] }
 pnet = { version="0.35.0", features=["serde"] }
 tokio = { version="1.49.0", features=["full"] }

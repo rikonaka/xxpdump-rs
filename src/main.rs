@@ -26,19 +26,24 @@ use std::sync::atomic::AtomicBool;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::atomic::Ordering;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use std::sync::atomic::Ordering::SeqCst;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::time::Instant;
 
-mod client;
-mod local;
-mod server;
+mod cli;
 mod split;
+mod transfer;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use client::capture_remote_client;
+use cli::capture_local;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use local::capture_local;
+use transfer::client::CLIENT_TOTAL_RECVED;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use server::capture_remote_server;
+use transfer::client::capture_remote_client;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use transfer::server::SERVRE_TOTAL_RECVED;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use transfer::server::capture_remote_server;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 // The default is 65535. This should always be larger than the snaplen.
@@ -80,15 +85,15 @@ struct Args {
     #[arg(short = 's', long, default_value_t = DEFAULT_SNAPLEN_SIZE)]
     snaplen: usize,
 
-    /// Set immediate mode on or off, by default, this is on for fast capture
-    #[arg(short = 'I', long, action)]
+    /// Set immediate mode on or off, by default, this is off
+    #[arg(short = 'I', long, action, default_value_t = false)]
     immediate: bool,
 
-    /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
-    #[arg(short = 'T', long, default_value_t = 0.1)]
+    /// Set the read timeout for the capture, by default, this is 10 ms
+    #[arg(short = 'T', long, default_value_t = 0.01)]
     timeout: f32,
 
-    /// Set the read timeout for the capture, by default, this is 0 so it will block indefinitely
+    /// Set the nonblock mode on or off, by default, this is off, when nonblock mode is on, the program will not block when there is no traffic, but it may cause higher CPU usage when capture traffic is heavy
     #[arg(short = 'N', long, action, default_value_t = false)]
     nonblock: bool,
 
@@ -272,42 +277,64 @@ fn print_filter_examples() {
     }
 }
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const WAIT_TOO_LONG_INFO: &str = "
+>>> its takes too long to stop: {replace} seconds,
+>>> this is normally caused by libpcap's dispatch function (it is blocking) when there no traffic,
+>>> if you wish, you can manually send some traffic that can be captured by xxpdump to end the wait,
+>>> note that forcibly exiting now will result in the loss of captured packets (tcpdump also has this problem),
+>>> please set -N for nonblock mode next time if you want to stop it immediately,
+>>> but this may cause higher CPU usage when capture traffic is heavy.
+";
+
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    let mode = args.mode.clone();
     let mut start: Option<Instant> = None;
     ctrlc::set_handler(move || {
         println!("stop capturing...");
-
-        match start {
-            Some(start) => {
-                let elapsed = start.elapsed().as_secs_f32();
-                if elapsed > 1.5 {
-                    let mut msg = String::new();
-                    msg += ">>> ";
-                    msg += &format!("its takes too long to stop: {:.2} seconds\n", elapsed);
-                    msg += ">>> ";
-                    msg += &format!("this is normally caused by libpcap's dispatch function (it is blocking) when there no traffic\n");
-                    msg += ">>> ";
-                    msg += &format!("if you wish, you can manually send some traffic that can be captured by xxpdump to end the wait\n");
-                    msg += ">>> ";
-                    msg += &format!("note that forcibly exiting now will result in the loss of captured packets (tcpdump also has this problem)\n");
-                    msg += ">>> ";
-                    msg += &format!("please set -N for nonblock mode next time if you want to stop it immediately\n");
-                    msg += ">>> ";
-                    msg += &format!("but this may cause higher CPU usage when capture traffic is heavy\n");
-                    println!("{}", msg);
+        match mode.as_str() {
+            "local" => {
+                match start {
+                    Some(start) => {
+                        let elapsed = start.elapsed().as_secs_f32();
+                        if elapsed > 1.5 {
+                            let elapsed_str = format!("{:.2}", elapsed);
+                            let msg = WAIT_TOO_LONG_INFO.replace("{replace}", &elapsed_str);
+                            println!("{}", msg);
+                        }
+                    }
+                    None => {
+                        // Set when first press ctrl-c,
+                        // this is used to calculate the elapsed time when second press ctrl-c.
+                        start = Some(Instant::now());
+                    }
                 }
+                SHOULD_EXIT.store(true, Ordering::SeqCst);
             }
-            None => {
-                // Set when first press ctrl-c,
-                // this is used to calculate the elapsed time when second press ctrl-c.
-                start = Some(Instant::now());
+            "server" => {
+                println!(
+                    "server total recved packet: {}",
+                    SERVRE_TOTAL_RECVED.load(SeqCst)
+                );
+                std::process::exit(0);
+            }
+            "client" => {
+                println!(
+                    "client total recved packet: {}",
+                    CLIENT_TOTAL_RECVED.load(SeqCst)
+                );
+                std::process::exit(0);
+            }
+            _ => {
+                eprintln!("unsupported mode");
+                std::process::exit(1);
             }
         }
-        SHOULD_EXIT.store(true, Ordering::SeqCst);
     })
     .expect("error setting ctrl+c handler");
 
@@ -316,7 +343,7 @@ async fn main() -> Result<()> {
     } else if args.filter_examples {
         print_filter_examples();
     } else {
-        println!("working...");
+        println!("xxpdump v{} working...", VERSION);
         match args.mode.as_str() {
             "local" => {
                 #[cfg(feature = "libpnet")]
