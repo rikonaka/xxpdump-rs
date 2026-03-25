@@ -10,14 +10,14 @@ use pcapture::fs::pcapng::GeneralBlock;
 use std::sync::atomic::Ordering;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::Args;
+use crate::CliArgs;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::SHOULD_EXIT;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::split::SplitRule;
 
 #[cfg(feature = "libpnet")]
-pub fn capture_local(args: Args) -> Result<()> {
+pub fn capture_local(args: CliArgs) -> Result<()> {
     let filter = if let Some(fl) = &args.filter {
         fl.clone()
     } else {
@@ -32,7 +32,7 @@ pub fn capture_local(args: Args) -> Result<()> {
     cap.set_timeout(args.timeout);
     cap.set_filter(&filter)?;
 
-    let mut split_rule = SplitRule::init(&args, pbo)?;
+    let mut split_rule = SplitRule::init(&args, pbo, None)?;
     let pcapng = cap.gen_pcapng_header(pbo)?;
 
     // there only SHB and IDB in the generated pcapng header now
@@ -49,7 +49,10 @@ pub fn capture_local(args: Args) -> Result<()> {
         match cap.next_as_pcapng() {
             Ok(block) => {
                 total_recved += 1;
-                split_rule.append(block)?;
+                match block {
+                    GeneralBlock::EnhancedPacketBlock(epb) => split_rule.append(epb)?,
+                    _ => (), // ignore the non-epb block, due to libpnet only return epb block data
+                }
             }
             Err(_e) => (), // ignore the error, just try to capture the next packet
         }
@@ -60,7 +63,7 @@ pub fn capture_local(args: Args) -> Result<()> {
 }
 
 #[cfg(feature = "libpcap")]
-pub fn capture_local(args: Args) -> Result<()> {
+pub fn capture_local(args: CliArgs) -> Result<()> {
     let mut cap = Capture::new(&args.interface)?;
     cap.set_promiscuous_mode(args.promisc);
     cap.set_immediate_mode(args.immediate);
@@ -74,7 +77,7 @@ pub fn capture_local(args: Args) -> Result<()> {
 
     let pbo = PcapByteOrder::WiresharkDefault;
     let pcapng = cap.gen_pcapng_header(pbo)?;
-    let mut split_rule = SplitRule::init(&args, pbo)?;
+    let mut split_rule = SplitRule::init(&args, pbo, None)?;
 
     for block in pcapng.blocks {
         match block {
@@ -89,7 +92,10 @@ pub fn capture_local(args: Args) -> Result<()> {
         let blocks = cap.fetch_as_pcapng()?;
         total_recved += blocks.len();
         for block in blocks {
-            split_rule.append(block)?;
+            match block {
+                GeneralBlock::EnhancedPacketBlock(epb) => split_rule.append(epb)?,
+                _ => (), // ignore the non-epb block, due to pcapture only return epb block data
+            }
         }
     }
 
@@ -105,7 +111,7 @@ mod test {
     #[test]
     fn server_run() {
         let itr = vec!["", "--count", "10"];
-        let args = Args::parse_from(itr);
+        let args = CliArgs::parse_from(itr);
         println!("{:?}", args.count);
         capture_local(args).unwrap();
     }

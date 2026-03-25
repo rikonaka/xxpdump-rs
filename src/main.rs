@@ -1,9 +1,5 @@
 use anyhow::Result;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use bitcode::Decode;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use bitcode::Encode;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use clap::ArgAction;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use clap::Parser;
@@ -15,10 +11,6 @@ use pcapture::Device;
 use pcapture::libpcap::Addr;
 #[cfg(feature = "libpnet")]
 use pnet::ipnetwork::IpNetwork;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use serde::Deserialize;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use serde::Serialize;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::iter::zip;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -37,7 +29,7 @@ mod transfer;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use cli::capture_local;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use transfer::client::CLIENT_TOTAL_RECVED;
+use transfer::client::CLIENT_TOTAL_SEND;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use transfer::client::capture_remote_client;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -56,22 +48,10 @@ const DEFAULT_SNAPLEN_SIZE: usize = 65535;
 /// Next generation packet dump software.
 #[derive(Parser, Debug, Clone)]
 #[command(author = "RikoNaka", version, about, long_about = None)]
-struct Args {
+struct CliArgs {
     /// The interface to capture, by default, this is 'any' which means pseudo-device that captures on all interfaces
     #[arg(short = 'i', long, default_value = "any")]
     interface: String,
-
-    /// Exit after receiving 'count' packets
-    #[arg(short = 'c', long)]
-    count: Option<usize>,
-
-    /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
-    #[arg(short = 'C', long)]
-    file_size: Option<String>, // 1MB, 1KB, 1GB .etc
-
-    /// Before writing a raw packet to a savefile, check whether the file is currently larger than file_size and, if so, close the current savefile and open a new one.
-    #[arg(short = 'r', long)]
-    rotate: Option<String>, // 1S, 1M, 1D .etc
 
     /// Set promiscuous mode on or off
     #[arg(short = 'p', long, action, default_value_t = false)]
@@ -113,18 +93,6 @@ struct Args {
     #[arg(long, alias = "ls", action, default_value_t = false)]
     list_interface: bool,
 
-    /// Set the save file path
-    #[arg(short = 'w', long)]
-    write: Option<String>,
-
-    /// Used in conjunction with the -C option, this will limit the number of files created to the specified number, and begin overwriting files from the beginning
-    #[arg(short = 'F', long, alias = "fc", default_value_t = 0)]
-    file_count: usize,
-
-    /// Log display level
-    #[arg(short = 'l', long, alias = "ll", default_value = "info")]
-    log_level: String,
-
     /// Remote capture server listen addr
     #[arg(long, alias = "sa", default_value = "0.0.0.0:12345")]
     server_addr: String,
@@ -148,27 +116,26 @@ struct Args {
     /// Show ethernet layer info
     #[arg(short = 'e', long, action, default_value_t = false)]
     show_ethernet: bool,
-}
 
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
-enum PcapNgType {
-    InterfaceDescriptionBlock,
-    // PacketBlock,
-    SimplePacketBlock,
-    NameResolutionBlock,
-    InterfaceStatisticsBlock,
-    EnhancedPacketBlock,
-    SectionHeaderBlock,
-    // CustomBlock,
-    // CustomBlock2,
-}
+    /// Set the save file path
+    #[arg(short = 'w', long)]
+    write: Option<String>,
 
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
-struct PcapNgTransport {
-    pub p_type: PcapNgType,
-    pub p_data: Vec<u8>,
+    /// Save a file after receiving 'count' data packets (in print mode, it not works)
+    #[arg(short = 'c', long, requires = "write")]
+    count: Option<usize>,
+
+    /// Save a file after the file size reaches 'file_size', note that the final saved result may not be a file of exactly the 'count' size. (in print mode, it not works)
+    #[arg(short = 'C', long, alias = "fs", requires = "write")]
+    file_size: Option<String>, // 1MB, 1KB, 1GB .etc
+
+    /// Save a file after the time duration reaches 'rotate' (in print mode, it not works)
+    #[arg(short = 'r', long, alias = "rt", requires = "write")]
+    rotate: Option<String>, // 1S, 1M, 1D .etc
+
+    /// This will limit the number of files created to the specified number, and begin overwriting files from the beginning
+    #[arg(long, alias = "mfc", requires = "write", default_value_t = 10)]
+    max_file_count: usize,
 }
 
 #[cfg(feature = "libpnet")]
@@ -291,7 +258,7 @@ const WAIT_TOO_LONG_INFO: &str = "
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = CliArgs::parse();
 
     let mode = args.mode.clone();
     let mut start: Option<Instant> = None;
@@ -326,7 +293,7 @@ async fn main() -> Result<()> {
             "client" => {
                 println!(
                     "client total recved packet: {}",
-                    CLIENT_TOTAL_RECVED.load(SeqCst)
+                    CLIENT_TOTAL_SEND.load(SeqCst)
                 );
                 std::process::exit(0);
             }
@@ -394,7 +361,7 @@ mod test {
     #[tokio::test]
     async fn server_run() {
         let itr = vec!["", "--mode", "server", "--rotate", "20s"];
-        let args = Args::parse_from(itr);
+        let args = CliArgs::parse_from(itr);
         println!("{}", args.mode);
         println!("{:?}", args.rotate);
         capture_remote_server(args).await.unwrap();

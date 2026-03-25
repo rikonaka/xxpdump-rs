@@ -13,7 +13,7 @@ use chrono::TimeZone;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::PcapByteOrder;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use pcapture::fs::pcapng::GeneralBlock;
+use pcapture::fs::pcapng::EnhancedPacketBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use pcapture::fs::pcapng::InterfaceDescriptionBlock;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -53,16 +53,16 @@ use regex::Regex;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::collections::HashMap;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use std::fmt;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::fs::File;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::net::IpAddr;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use std::net::SocketAddr;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::Args;
-
-// write after how many packets
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-const WRITE_AFTER: usize = 100;
+use crate::CliArgs;
 
 /// Convert human-readable file_size parameter to bytes, for exampele, 1KB, 1MB, 1GB, 1PB .etc.
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -106,17 +106,17 @@ fn parse_bytes(file_size: &str) -> Result<u64> {
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-const ROTATE_SEC_FORMAT: &str = "%Y_%m_%d_%H_%M_%S";
+const ROTATE_SEC_FORMAT: &str = "%Y%m%d%H%M%S";
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-const ROTATE_MIN_FORMAT: &str = "%Y_%m_%d_%H_%M";
+const ROTATE_MIN_FORMAT: &str = "%Y%m%d%H%M";
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-const ROTATE_HOUR_FORMAT: &str = "%Y_%m_%d_%H";
+const ROTATE_HOUR_FORMAT: &str = "%Y%m%d%H";
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-const ROTATE_DAY_FORMAT: &str = "%Y_%m_%d";
+const ROTATE_DAY_FORMAT: &str = "%Y%m%d";
 
 /// Convert human-readable rotate parameter to secs, for exampele, 1s, 1m, 1h, 1d, 1w, .etc.
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-fn parse_rotate(rotate: &str) -> Result<(u64, &str)> {
+fn parse_rotate(rotate: &str) -> Result<(f32, &str)> {
     if rotate.len() == 0 {
         return Err(anyhow!("rotate parameter is empty"));
     }
@@ -127,9 +127,9 @@ fn parse_rotate(rotate: &str) -> Result<(u64, &str)> {
         let unit_str = &caps["unit"];
         let num: u64 = match num_str.parse() {
             Ok(n) => n,
-            Err(_) => return Err(anyhow!("wrong rotate parameter [{rotate}]")),
+            Err(_e) => return Err(anyhow!("wrong rotate parameter [{rotate}]")),
         };
-        let (final_rotate, format_str) = if unit_str.len() == 0 {
+        let (threshold_rotate, format_str) = if unit_str.len() == 0 {
             // no unit, by default, it secs
             (num, ROTATE_SEC_FORMAT)
         } else {
@@ -147,7 +147,7 @@ fn parse_rotate(rotate: &str) -> Result<(u64, &str)> {
                 return Err(anyhow!("wrong unit [{unit_str}]"));
             }
         };
-        Ok((final_rotate, format_str))
+        Ok((threshold_rotate as f32, format_str))
     } else {
         return Err(anyhow!("wrong rotate parameter [{rotate}]"));
     }
@@ -158,8 +158,6 @@ fn parse_rotate(rotate: &str) -> Result<(u64, &str)> {
 pub struct SplitRuleNone {
     shb: Option<SectionHeaderBlock>,
     idbs: Option<Vec<InterfaceDescriptionBlock>>,
-    // write it not immediately
-    blocks: Vec<GeneralBlock>,
     write_fs: File,
     pbo: PcapByteOrder,
     write_header: bool,
@@ -167,17 +165,11 @@ pub struct SplitRuleNone {
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleNone {
-    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
-        self.blocks.push(block);
-        // call it but not write immediately
-        self.write(false)?;
+    pub fn append(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
+        self.write(epb)?;
         Ok(())
     }
-    pub fn write(&mut self, write_immediately: bool) -> Result<()> {
-        if self.blocks.len() < WRITE_AFTER && !write_immediately {
-            return Ok(());
-        }
-
+    pub fn write(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
         // only write header once
         if self.write_header {
             if let Some(shb) = &self.shb {
@@ -190,10 +182,7 @@ impl SplitRuleNone {
             }
             self.write_header = false;
         }
-        for block in &self.blocks {
-            block.write(&mut self.write_fs, self.pbo)?;
-        }
-        self.blocks.clear();
+        epb.write(&mut self.write_fs, self.pbo)?;
         Ok(())
     }
 }
@@ -203,39 +192,37 @@ impl SplitRuleNone {
 pub struct SplitRuleRotate {
     pub shb: Option<SectionHeaderBlock>,
     pub idbs: Option<Vec<InterfaceDescriptionBlock>>,
-    threshold_rotate: u64,
+    threshold_rotate: f32,
     last_rotate: DateTime<Local>,
     origin_path: String,
     // write it not immediately
-    pub blocks: Vec<GeneralBlock>,
     pub write_fs: File,
     // {prefix}.origin_path => real write path
     prefix: String,
     prefix_format: String,
     pbo: PcapByteOrder,
     write_header: bool,
+    addr: Option<SocketAddr>,
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleRotate {
-    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
-        self.blocks.push(block);
-        // call it but not write immediately
-        self.write(false)?;
+    pub fn append(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
+        self.write(epb)?;
         Ok(())
     }
-    pub fn write(&mut self, write_immediately: bool) -> Result<()> {
-        if self.blocks.len() < WRITE_AFTER && !write_immediately {
-            return Ok(());
-        }
-
+    pub fn write(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
         // check rotate time
         let now = Local::now();
-        let elapsed = now.timestamp() - self.last_rotate.timestamp();
+        let elapsed = now - self.last_rotate;
         // rotate the file
-        if elapsed as u64 >= self.threshold_rotate {
+        if elapsed.as_seconds_f32() >= self.threshold_rotate {
             self.prefix = now.format(&self.prefix_format).to_string();
-            let write_path = format!("{}.{}", self.prefix, self.origin_path);
+            let write_path = match self.addr {
+                Some(addr) => format!("{}.{}.{}", addr, self.prefix, self.origin_path),
+                None => format!("{}.{}", self.prefix, self.origin_path),
+            };
+
             let write_fs = File::create(write_path)?;
 
             self.last_rotate = now;
@@ -256,10 +243,7 @@ impl SplitRuleRotate {
             self.write_header = false;
         }
 
-        for block in &self.blocks {
-            block.write(&mut self.write_fs, self.pbo)?;
-        }
-        self.blocks.clear();
+        epb.write(&mut self.write_fs, self.pbo)?;
         Ok(())
     }
 }
@@ -269,38 +253,37 @@ impl SplitRuleRotate {
 pub struct SplitRuleFileSize {
     pub shb: Option<SectionHeaderBlock>,
     pub idbs: Option<Vec<InterfaceDescriptionBlock>>,
-    threshold_size: u64,
+    threshold_file_size: u64,
     last_size: u64,
-    origin_path: String,
+    file_ext: String,
     // write it not immediately
-    pub blocks: Vec<GeneralBlock>,
     pub write_fs: File,
     // {prefix}.write_path => real write path
     prefix: usize,
-    file_count: usize,
+    prefix_max: usize,
     pbo: PcapByteOrder,
     write_header: bool,
+    addr: Option<SocketAddr>,
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRuleFileSize {
-    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
-        self.blocks.push(block);
+    pub fn append(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
         // call it but not write immediately
-        self.write(false)?;
+        self.write(epb)?;
         Ok(())
     }
-    pub fn write(&mut self, write_immediately: bool) -> Result<()> {
-        if self.blocks.len() < WRITE_AFTER && !write_immediately {
-            return Ok(());
-        }
-
-        if self.last_size >= self.threshold_size {
+    pub fn write(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
+        if self.last_size >= self.threshold_file_size {
             self.prefix += 1;
-            if self.file_count > 0 && self.prefix >= self.file_count {
+            if self.prefix_max > 0 && self.prefix >= self.prefix_max {
                 self.prefix = 0;
             }
-            let write_path = format!("{}.{}", self.prefix, self.origin_path);
+            let write_path = match self.addr {
+                Some(addr) => format!("{}.{}.{}", addr, self.prefix, self.file_ext),
+                None => format!("{}.{}", self.prefix, self.file_ext),
+            };
+            println!("new file to write: {}", &write_path);
             let fs = File::create(write_path)?;
 
             self.last_size = 0;
@@ -320,11 +303,8 @@ impl SplitRuleFileSize {
             self.write_header = false;
         }
 
-        for block in &self.blocks {
-            block.write(&mut self.write_fs, self.pbo)?;
-            self.last_size += block.size() as u64;
-        }
-        self.blocks.clear();
+        epb.write(&mut self.write_fs, self.pbo)?;
+        self.last_size += epb.size() as u64;
         Ok(())
     }
 }
@@ -332,40 +312,38 @@ impl SplitRuleFileSize {
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 #[derive(Debug)]
 pub struct SplieRuleCount {
-    pub shb: Option<SectionHeaderBlock>,
-    pub idbs: Option<Vec<InterfaceDescriptionBlock>>,
-    threshold_num: usize,
+    shb: Option<SectionHeaderBlock>,
+    idbs: Option<Vec<InterfaceDescriptionBlock>>,
+    threshold_packet_num: usize,
     packet_num: usize,
-    origin_path: String,
+    file_ext: String,
     // write it not immediatelyly
-    pub blocks: Vec<GeneralBlock>,
-    pub write_fs: File,
+    write_fs: File,
     // {prefix}.write_path => real write path
     prefix: usize,
     prefix_max: usize,
     pbo: PcapByteOrder,
     write_header: bool,
+    addr: Option<SocketAddr>,
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplieRuleCount {
-    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
-        self.blocks.push(block);
+    pub fn append(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
         // call it but not write immediatelyly
-        self.write(false)?;
+        self.write(epb)?;
         Ok(())
     }
-    pub fn write(&mut self, write_immediately: bool) -> Result<()> {
-        if self.blocks.len() < WRITE_AFTER && !write_immediately {
-            return Ok(());
-        }
-
-        if self.packet_num >= self.threshold_num {
+    pub fn write(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
+        if self.packet_num >= self.threshold_packet_num {
             self.prefix += 1;
             if self.prefix >= self.prefix_max {
                 self.prefix = 0;
             }
-            let write_path = format!("{}.{}", self.prefix, self.origin_path);
+            let write_path = match self.addr {
+                Some(addr) => format!("{}.{}.{}", addr, self.prefix, self.file_ext),
+                None => format!("{}.{}", self.prefix, self.file_ext),
+            };
             let fs = File::create(write_path)?;
 
             self.packet_num = 0;
@@ -385,11 +363,8 @@ impl SplieRuleCount {
             self.write_header = false;
         }
 
-        for block in &self.blocks {
-            block.write(&mut self.write_fs, self.pbo)?;
-        }
-        self.packet_num += self.blocks.len();
-        self.blocks.clear();
+        epb.write(&mut self.write_fs, self.pbo)?;
+        self.packet_num += 1;
         Ok(())
     }
 }
@@ -405,98 +380,110 @@ pub enum SplitRule {
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-impl Drop for SplitRule {
-    fn drop(&mut self) {
+impl fmt::Display for SplitRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Count(c) => {
-                c.write(true).expect("final write failed");
-            }
-            Self::FileSize(f) => {
-                f.write(true).expect("final write failed");
-            }
-            Self::Rotate(r) => {
-                r.write(true).expect("final write failed");
-            }
-            Self::None(n) => {
-                n.write(true).expect("final write failed");
-            }
-            Self::Print(_) => (),
+            Self::Count(_) => write!(f, "write with count"),
+            Self::FileSize(_) => write!(f, "write with file_size"),
+            Self::Rotate(_) => write!(f, "write with rotate"),
+            Self::None(_) => write!(f, "write with none"),
+            Self::Print(_) => write!(f, "print not write"),
         }
     }
 }
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl SplitRule {
-    pub fn init(args: &Args, pbo: PcapByteOrder) -> Result<SplitRule> {
-        let path = &args.write;
-        if let Some(path) = path {
-            let file_count = args.file_count;
+    pub fn init(args: &CliArgs, pbo: PcapByteOrder, addr: Option<SocketAddr>) -> Result<SplitRule> {
+        if let Some(file_ext) = &args.write {
+            let file_ext = if file_ext.ends_with(".pcapng") || file_ext.ends_with(".pcap") {
+                file_ext.clone()
+            } else {
+                // default to pcapng
+                let new_file_ext = format!("{}.pcapng", file_ext);
+                println!(
+                    "change write file extension from [{}] to [{}]",
+                    file_ext, &new_file_ext
+                );
+                new_file_ext
+            };
 
+            let prefix_max = args.max_file_count;
             let input_count = args.count;
-            let input_size_str = &args.file_size;
+            let input_file_size_str = &args.file_size;
             let input_rotate_str = &args.rotate;
 
             if let Some(count) = input_count {
-                let write_path = format!("0.{}", path);
+                // write with count mode
+                let write_path = match addr {
+                    Some(addr) => format!("{}.0.{}", addr.ip(), file_ext),
+                    None => format!("0.{}", file_ext),
+                };
                 let write_fs = File::create(&write_path)?;
                 let src = SplieRuleCount {
                     shb: None,
                     idbs: None,
-                    threshold_num: count,
+                    threshold_packet_num: count,
                     packet_num: 0,
-                    origin_path: path.clone(),
-                    blocks: Vec::new(),
+                    file_ext: file_ext.clone(),
                     write_fs,
                     prefix: 0,
-                    prefix_max: file_count,
+                    prefix_max,
                     pbo,
                     write_header: true,
+                    addr,
                 };
                 Ok(SplitRule::Count(src))
-            } else if let Some(input_size_str) = input_size_str {
-                let write_path = format!("0.{}", path);
+            } else if let Some(input_file_size_str) = input_file_size_str {
+                // write with file size mode
+                let write_path = match addr {
+                    Some(addr) => format!("{}.0.{}", addr.ip(), file_ext),
+                    None => format!("0.{}", file_ext),
+                };
                 let write_fs = File::create(&write_path)?;
-                let file_size = parse_bytes(input_size_str)?;
+                let file_size = parse_bytes(input_file_size_str)?;
                 let spfs = SplitRuleFileSize {
                     shb: None,
                     idbs: None,
-                    threshold_size: file_size,
+                    threshold_file_size: file_size,
                     last_size: 0,
-                    origin_path: path.clone(),
-                    blocks: Vec::new(),
+                    file_ext: file_ext.clone(),
                     write_fs,
                     prefix: 0,
-                    file_count,
+                    prefix_max,
                     pbo,
                     write_header: true,
+                    addr,
                 };
                 Ok(SplitRule::FileSize(spfs))
-            } else if let Some(rotate_str) = input_rotate_str {
+            } else if let Some(input_rotate_str) = input_rotate_str {
                 let current_rotate = Local::now();
-                let (rotate, rotate_format) = parse_rotate(rotate_str)?;
-                let current_rotate_str = current_rotate.format(rotate_format).to_string();
-                let write_path = format!("{}.{}", current_rotate_str, path);
+                let (threshold_rotate, prefix_format) = parse_rotate(input_rotate_str)?;
+                let prefix = current_rotate.format(prefix_format).to_string();
+                let write_path = match addr {
+                    Some(addr) => format!("{}.{}.{}", addr.ip(), prefix, file_ext),
+                    None => format!("{}.{}", prefix, file_ext),
+                };
                 let write_fs = File::create(&write_path)?;
                 let srr = SplitRuleRotate {
                     shb: None,
                     idbs: None,
-                    threshold_rotate: rotate,
+                    threshold_rotate,
                     last_rotate: current_rotate,
-                    origin_path: path.clone(),
-                    blocks: Vec::new(),
+                    origin_path: file_ext.clone(),
                     write_fs,
-                    prefix_format: rotate_format.to_string(),
-                    prefix: current_rotate_str,
+                    prefix_format: prefix_format.to_string(),
+                    prefix,
                     pbo,
                     write_header: true,
+                    addr,
                 };
                 Ok(SplitRule::Rotate(srr))
             } else {
-                let write_fs = File::create(&path)?;
+                let write_fs = File::create(&file_ext)?;
                 let srn = SplitRuleNone {
                     shb: None,
                     idbs: None,
-                    blocks: Vec::new(),
                     write_fs,
                     pbo,
                     write_header: true,
@@ -538,14 +525,14 @@ impl SplitRule {
             Ok(srp)
         }
     }
-    pub fn append(&mut self, block: GeneralBlock) -> Result<()> {
+    pub fn append(&mut self, epb: EnhancedPacketBlock) -> Result<()> {
         match self {
-            Self::Count(c) => c.append(block),
-            Self::FileSize(f) => f.append(block),
-            Self::Rotate(r) => r.append(block),
-            Self::None(n) => n.append(block),
+            Self::Count(c) => c.append(epb),
+            Self::FileSize(f) => f.append(epb),
+            Self::Rotate(r) => r.append(epb),
+            Self::None(n) => n.append(epb),
             Self::Print(p) => {
-                p.print(block);
+                p.print(epb);
                 // just show the packet info on terminal
                 Ok(())
             }
@@ -1195,60 +1182,55 @@ impl PacketPrinter {
         }
     }
 
-    fn print(&mut self, block: GeneralBlock) {
+    fn print(&mut self, epb: EnhancedPacketBlock) {
         // from my tcpdump (version: 4.99.5) output:
         // program output:
         // 11:51:39.979805 IP: 192.168.5.3.22 > 192.168.5.1.55981, TCP: Flags [P.], seq 2406649272:2406649364, ack 2364440282, win 9836, len 92
         // 11:51:40.021937 IP: 192.168.5.3.22 > 192.168.5.1.55981, TCP: Flags [P.], seq 2406649364:2406649464, ack 2364440282, win 9836, len 100
         // 11:51:40.022391 IP: 192.168.5.1.55981 > 192.168.5.3.22, TCP: Flags [.], seq 2364440282:2364440282, ack 2406649464, win 1023, len 0
-        match block {
-            GeneralBlock::EnhancedPacketBlock(epb) => {
-                let ts_high = epb.ts_high;
-                let ts_low = epb.ts_low;
-                let ethernet_data = epb.packet_data;
+        let ts_high = epb.ts_high;
+        let ts_low = epb.ts_low;
+        let ethernet_data = epb.packet_data;
 
-                let mut msg_vec = Vec::new();
+        let mut msg_vec = Vec::new();
 
-                // 1. print time string
-                let time_str = self.time_printer.print(ts_high, ts_low);
-                msg_vec.push(time_str);
+        // 1. print time string
+        let time_str = self.time_printer.print(ts_high, ts_low);
+        msg_vec.push(time_str);
 
-                // 2. print ethernet info if needed
-                let (ethernet_str, next_level_protocol, eth_payload) =
-                    self.ethernet_printer.print(&ethernet_data);
-                msg_vec.push(ethernet_str);
+        // 2. print ethernet info if needed
+        let (ethernet_str, next_level_protocol, eth_payload) =
+            self.ethernet_printer.print(&ethernet_data);
+        msg_vec.push(ethernet_str);
 
-                if eth_payload.len() > 0 {
-                    // 3. print IP info
-                    let (ip_msg, ret) = match next_level_protocol {
-                        Some(nlp) => self.ip_printer.print(nlp, &eth_payload),
-                        None => (String::new(), None),
-                    };
-                    msg_vec.push(ip_msg);
-                    if let Some((src_addr, dst_addr, nlp, ip_payload)) = ret {
-                        if ip_payload.len() > 0 {
-                            // 4. print TCP/UDP info
-                            let tcp_udp_msg = match nlp {
-                                Some(nlp) => {
-                                    self.tcp_udp_printer
-                                        .print(src_addr, dst_addr, nlp, &ip_payload)
-                                }
-                                None => String::new(),
-                            };
-                            msg_vec.push(tcp_udp_msg);
+        if eth_payload.len() > 0 {
+            // 3. print IP info
+            let (ip_msg, ret) = match next_level_protocol {
+                Some(nlp) => self.ip_printer.print(nlp, &eth_payload),
+                None => (String::new(), None),
+            };
+            msg_vec.push(ip_msg);
+            if let Some((src_addr, dst_addr, nlp, ip_payload)) = ret {
+                if ip_payload.len() > 0 {
+                    // 4. print TCP/UDP info
+                    let tcp_udp_msg = match nlp {
+                        Some(nlp) => {
+                            self.tcp_udp_printer
+                                .print(src_addr, dst_addr, nlp, &ip_payload)
                         }
-                    }
+                        None => String::new(),
+                    };
+                    msg_vec.push(tcp_udp_msg);
                 }
-
-                let new_msg_vec: Vec<&str> = msg_vec
-                    .iter()
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.as_str())
-                    .collect();
-                let final_msg = new_msg_vec.join("|");
-                println!("{}", final_msg);
             }
-            _ => (),
         }
+
+        let new_msg_vec: Vec<&str> = msg_vec
+            .iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.as_str())
+            .collect();
+        let final_msg = new_msg_vec.join("|");
+        println!("{}", final_msg);
     }
 }

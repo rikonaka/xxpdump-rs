@@ -22,14 +22,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::Args;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::PcapNgTransport;
-#[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use crate::PcapNgType;
+use crate::CliArgs;
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-pub static CLIENT_TOTAL_RECVED: AtomicUsize = AtomicUsize::new(0);
+pub static CLIENT_TOTAL_SEND: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 struct Client {
@@ -46,53 +42,31 @@ impl Client {
 
     /// Client only send data not recv.
     pub async fn send_block(&mut self, block: GeneralBlock) -> Result<()> {
-        async fn send_with_pcapng_transport(
-            stream: &mut TcpStream,
-            pcapng_t: PcapNgTransport,
-        ) -> Result<()> {
-            let send_pcapng_t = bitcode::encode(&pcapng_t);
-            let encode_len = send_pcapng_t.len() as u32;
-            let send_len = encode_len.to_be_bytes(); // BigEndian on internet
+        let send_data = bitcode::encode(&block);
+        let send_data_len = send_data.len() as u32;
+        // big endian length on internet
+        let send_data_len = send_data_len.to_be_bytes();
 
-            println!("send a block to server, length: {}", encode_len);
-            println!(
-                "data: {}",
-                send_pcapng_t
-                    .iter()
-                    .map(|x| format!("{:02x}", x))
-                    .collect::<Vec<String>>()
-                    .join("")
-            );
-            // first send 4 bytes length
-            stream.write_all(&send_len).await?;
-            // second send the data
-            println!("send block data to server...");
-            stream.write_all(&send_pcapng_t).await?;
-            Ok(())
-        }
-
-        let (p_type, p_data) = match block {
-            GeneralBlock::SectionHeaderBlock(shb) => {
-                (PcapNgType::SectionHeaderBlock, bitcode::encode(&shb))
-            }
-            GeneralBlock::InterfaceDescriptionBlock(idb) => {
-                (PcapNgType::InterfaceDescriptionBlock, bitcode::encode(&idb))
-            }
-            GeneralBlock::EnhancedPacketBlock(epb) => {
-                (PcapNgType::EnhancedPacketBlock, bitcode::encode(&epb))
-            }
-            GeneralBlock::SimplePacketBlock(spb) => {
-                (PcapNgType::SimplePacketBlock, bitcode::encode(&spb))
-            }
-            GeneralBlock::InterfaceStatisticsBlock(isb) => {
-                (PcapNgType::InterfaceStatisticsBlock, bitcode::encode(&isb))
-            }
-            GeneralBlock::NameResolutionBlock(nrb) => {
-                (PcapNgType::NameResolutionBlock, bitcode::encode(&nrb))
+        // first send 4 bytes length
+        match self.stream.write_all(&send_data_len).await {
+            Ok(_) => (),
+            Err(e) => {
+                // server shutdown or network error
+                eprintln!("failed to send data length to server: {}", e);
+                return Ok(());
             }
         };
-        let pcapng_t = PcapNgTransport { p_type, p_data };
-        send_with_pcapng_transport(&mut self.stream, pcapng_t).await?;
+        // second send the data
+        match self.stream.write_all(&send_data).await {
+            Ok(_) => (),
+            Err(e) => {
+                // server shutdown or network error
+                eprintln!("failed to send data to server: {}", e);
+                return Ok(());
+            }
+        }
+
+        CLIENT_TOTAL_SEND.fetch_add(1, SeqCst);
         Ok(())
     }
     /// Very simple auth function.
@@ -121,33 +95,48 @@ impl Client {
 }
 
 #[cfg(feature = "libpnet")]
-pub async fn capture_remote_client(args: Args) -> Result<()> {
-    let filter = if args.ignore_self_traffic {
-        let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
-        let server_addr = server_addr_split[0];
-        let server_port = server_addr_split[1];
-        // ignore communication with the server
-        let filter = format!("not host {} and not port {}", server_addr, server_port);
-        filter
-    } else {
-        String::new()
-    };
-
-    let filter = if let Some(fu) = args.filter {
-        format!("{} and ({})", filter, fu)
-    } else {
-        filter
-    };
-
+pub async fn capture_remote_client(args: CliArgs) -> Result<()> {
     let mut cap = match Capture::new(&args.interface) {
         Ok(c) => c,
         Err(e) => panic!("init the Capture failed: {}", e),
     };
+
     cap.set_promiscuous(args.promisc);
     cap.set_buffer_size(args.buffer_size);
     cap.set_snaplen(args.snaplen);
     cap.set_timeout(args.timeout);
-    cap.set_filter(&filter)?;
+
+    let ignore_self_traffc_filter = if args.ignore_self_traffic {
+        let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
+        if server_addr_split.len() >= 2 {
+            let server_addr = server_addr_split[0];
+            let server_port = server_addr_split[1];
+            let filter = format!("not (host {} and port {})", server_addr, server_port);
+            Some(filter)
+        } else {
+            eprintln!(
+                "invalid server address: {} (example: 192.168.5.78:12345)",
+                args.server_addr
+            );
+            return Ok(());
+        }
+    } else {
+        None
+    };
+
+    match args.filter {
+        Some(fu) => {
+            let filter = match ignore_self_traffc_filter {
+                Some(istf) => {
+                    let new_filter = format!("{} and ({})", istf, fu);
+                    new_filter
+                }
+                None => fu,
+            };
+            cap.set_filter(&filter)?;
+        }
+        None => {}
+    }
 
     let pbo = PcapByteOrder::WiresharkDefault; // default
     let mut client = Client::connect(&args.server_addr).await?;
@@ -158,12 +147,9 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
             client.send_block(block).await?;
         }
 
-        let mut total_recved = 0;
         loop {
             match cap.next_as_pcapng() {
                 Ok(block) => {
-                    total_recved += 1;
-                    CLIENT_TOTAL_RECVED.fetch_add(1, SeqCst);
                     client.send_block(block).await?;
                 }
                 Err(e) => eprintln!("{}", e),
@@ -176,7 +162,7 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
 }
 
 #[cfg(feature = "libpcap")]
-pub async fn capture_remote_client(args: Args) -> Result<()> {
+pub async fn capture_remote_client(args: CliArgs) -> Result<()> {
     let devices = Device::list()?;
     let device = devices.iter().find(|&d| d.name == args.interface);
     let device = match device {
@@ -189,14 +175,19 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
 
     let mut cap = Capture::new(&device.name)?;
 
-    let filter = if args.ignore_self_traffic {
+    cap.set_promiscuous_mode(args.promisc);
+    cap.set_buffer_size(args.buffer_size);
+    cap.set_snaplen(args.snaplen);
+    cap.set_immediate_mode(args.immediate);
+    cap.set_timeout((args.timeout * 1000.0) as i32);
+
+    let ignore_self_traffc_filter = if args.ignore_self_traffic {
         let server_addr_split: Vec<&str> = args.server_addr.split(":").collect();
         if server_addr_split.len() >= 2 {
             let server_addr = server_addr_split[0];
             let server_port = server_addr_split[1];
-            // ignore communication with the server
-            let filter = format!("not host {} and not port {}", server_addr, server_port);
-            filter
+            let filter = format!("not (host {} and port {})", server_addr, server_port);
+            Some(filter)
         } else {
             eprintln!(
                 "invalid server address: {} (example: 192.168.5.78:12345)",
@@ -205,36 +196,37 @@ pub async fn capture_remote_client(args: Args) -> Result<()> {
             return Ok(());
         }
     } else {
-        String::new()
+        None
     };
 
-    cap.set_promiscuous_mode(args.promisc);
-    cap.set_buffer_size(args.buffer_size);
-    cap.set_snaplen(args.snaplen);
-    cap.set_immediate_mode(args.immediate);
-    cap.set_timeout((args.timeout * 1000.0) as i32);
-    cap.set_filter(&filter);
+    match args.filter {
+        Some(fu) => {
+            let filter = match ignore_self_traffc_filter {
+                Some(istf) => {
+                    let new_filter = format!("{} and ({})", istf, fu);
+                    new_filter
+                }
+                None => fu,
+            };
+            cap.set_filter(&filter);
+        }
+        None => {}
+    }
 
     let mut client = Client::connect(&args.server_addr).await?;
 
-    println!("start authentication with server...");
     if client.auth(&args.server_passwd).await? {
-        println!("authentication success, start capture and send packets to server...");
         let pbo = PcapByteOrder::WiresharkDefault;
         let pcapng = cap.gen_pcapng_header(pbo)?;
-        println!("send pcapng header to server...");
         for block in pcapng.blocks {
             // shb and idb
             client.send_block(block).await?;
         }
 
-        println!("start capture packets...");
         loop {
             match cap.fetch_as_pcapng() {
                 Ok(blocks) => {
-                    CLIENT_TOTAL_RECVED.fetch_add(blocks.len(), SeqCst);
                     for block in blocks {
-                        println!("send block to server...");
                         client.send_block(block).await?;
                     }
                 }
