@@ -223,6 +223,7 @@ fn list_interface() -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -244,8 +245,10 @@ fn print_filter_examples() {
     }
 }
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 const WAIT_TOO_LONG_INFO: &str = "
 >>> its takes too long to stop: {replace} seconds,
 >>> this is normally caused by libpcap's dispatch function (it is blocking) when there no traffic,
