@@ -219,7 +219,7 @@ impl SplitRuleRotate {
         if elapsed.as_seconds_f32() >= self.threshold_rotate {
             self.prefix = now.format(&self.prefix_format).to_string();
             let write_path = match self.addr {
-                Some(addr) => format!("{}.{}.{}", addr, self.prefix, self.origin_path),
+                Some(addr) => format!("{}.{}.{}", addr.ip(), self.prefix, self.origin_path),
                 None => format!("{}.{}", self.prefix, self.origin_path),
             };
 
@@ -280,7 +280,7 @@ impl SplitRuleFileSize {
                 self.prefix = 0;
             }
             let write_path = match self.addr {
-                Some(addr) => format!("{}.{}.{}", addr, self.prefix, self.file_ext),
+                Some(addr) => format!("{}.{}.{}", addr.ip(), self.prefix, self.file_ext),
                 None => format!("{}.{}", self.prefix, self.file_ext),
             };
             println!("new file to write: {}", &write_path);
@@ -341,7 +341,7 @@ impl SplieRuleCount {
                 self.prefix = 0;
             }
             let write_path = match self.addr {
-                Some(addr) => format!("{}.{}.{}", addr, self.prefix, self.file_ext),
+                Some(addr) => format!("{}.{}.{}", addr.ip(), self.prefix, self.file_ext),
                 None => format!("{}.{}", self.prefix, self.file_ext),
             };
             let fs = File::create(write_path)?;
@@ -401,10 +401,18 @@ impl SplitRule {
             } else {
                 // default to pcapng
                 let new_file_ext = format!("{}.pcapng", file_ext);
-                println!(
-                    "change write file extension from [{}] to [{}]",
-                    file_ext, &new_file_ext
-                );
+                match addr {
+                    Some(addr) => {
+                        println!(
+                            "change write file extension from [{}] to [{}] for client {}",
+                            file_ext, &new_file_ext, addr
+                        );
+                    }
+                    None => println!(
+                        "change write file extension from [{}] to [{}]",
+                        file_ext, &new_file_ext
+                    ),
+                }
                 new_file_ext
             };
 
@@ -480,7 +488,11 @@ impl SplitRule {
                 };
                 Ok(SplitRule::Rotate(srr))
             } else {
-                let write_fs = File::create(&file_ext)?;
+                let write_path = match addr {
+                    Some(addr) => format!("{}.{}", addr.ip(), file_ext),
+                    None => format!("{}", file_ext),
+                };
+                let write_fs = File::create(&write_path)?;
                 let srn = SplitRuleNone {
                     shb: None,
                     idbs: None,
