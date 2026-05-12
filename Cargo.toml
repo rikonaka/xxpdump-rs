@@ -14,8 +14,7 @@ ctrlc = "3.5.2"
 regex = "1.12.3"
 chrono = "0.4.43"
 anyhow = "1.0.101"
-pcapture = "0.3.23"
-# pcapture = { version="0.3.23", path="../pcapture-rs" }
+pcapture = "0.3.27"
 clap = { version="4.5.58", features=["derive"] }
 pnet = { version="0.35.0", features=["serde"] }
 tokio = { version="1.49.0", features=["full"] }
