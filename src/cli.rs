@@ -44,6 +44,8 @@ pub fn capture_local(args: CliArgs) -> Result<()> {
         }
     }
 
+    let mut start = Instant::now();
+    let kill = args.kill;
     let mut total_recved = 0;
     while !SHOULD_EXIT.load(Ordering::SeqCst) {
         match cap.next_as_pcapng() {
@@ -56,6 +58,13 @@ pub fn capture_local(args: CliArgs) -> Result<()> {
             }
             Err(_e) => (), // ignore the error, just try to capture the next packet
         }
+
+        if let Some(k) = kill {
+            if k >= start.elapsed().as_secs_f32() {
+                println!("total captured packet: {}", total_recved);
+                start = Instant::now();
+            }
+        }
     }
 
     println!("total captured packet: {}", total_recved);
@@ -64,6 +73,8 @@ pub fn capture_local(args: CliArgs) -> Result<()> {
 
 #[cfg(feature = "libpcap")]
 pub fn capture_local(args: CliArgs) -> Result<()> {
+    use std::time::Instant;
+
     let mut cap = Capture::new(&args.interface)?;
     cap.set_promiscuous_mode(args.promisc);
     cap.set_immediate_mode(args.immediate);
@@ -87,6 +98,8 @@ pub fn capture_local(args: CliArgs) -> Result<()> {
         }
     }
 
+    let mut start = Instant::now();
+    let kill = args.kill;
     let mut total_recved = 0;
     while !SHOULD_EXIT.load(Ordering::SeqCst) {
         let blocks = cap.fetch_as_pcapng()?;
@@ -95,6 +108,13 @@ pub fn capture_local(args: CliArgs) -> Result<()> {
             match block {
                 GeneralBlock::EnhancedPacketBlock(epb) => split_rule.append(epb)?,
                 _ => (), // ignore the non-epb block, due to pcapture only return epb block data
+            }
+        }
+
+        if let Some(k) = kill {
+            if k >= start.elapsed().as_secs_f32() {
+                println!("total captured packet: {}", total_recved);
+                start = Instant::now();
             }
         }
     }

@@ -93,6 +93,10 @@ struct CliArgs {
     #[arg(long, alias = "ls", action, default_value_t = false)]
     list_interface: bool,
 
+    /// Print the number of packets captured every k seconds
+    #[arg(short = 'k', long)]
+    kill: Option<f32>,
+
     /// Remote capture server listen addr
     #[arg(long, alias = "sa", default_value = "0.0.0.0:12345")]
     server_addr: String,
