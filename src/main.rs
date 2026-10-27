@@ -250,7 +250,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 const WAIT_TOO_LONG_INFO: &str = "
->>> its takes too long to stop: {replace} seconds,
+>>> its takes too long to stop: {elapsed_str} seconds,
 >>> this is normally caused by libpcap's dispatch function (it is blocking) when there no traffic,
 >>> if you wish, you can manually send some traffic that can be captured by xxpdump to end the wait,
 >>> note that forcibly exiting now will result in the loss of captured packets (tcpdump also has this problem),
@@ -274,7 +274,7 @@ async fn main() -> Result<()> {
                         let elapsed = start.elapsed().as_secs_f32();
                         if elapsed > 1.5 {
                             let elapsed_str = format!("{:.2}", elapsed);
-                            let msg = WAIT_TOO_LONG_INFO.replace("{replace}", &elapsed_str);
+                            let msg = WAIT_TOO_LONG_INFO.replace("{elapsed_str}", &elapsed_str);
                             println!("{}", msg);
                         }
                     }
@@ -324,6 +324,7 @@ async fn main() -> Result<()> {
                 } else {
                     capture_local(args)?;
                 }
+
                 #[cfg(feature = "libpcap")]
                 capture_local(args)?;
             }
@@ -336,6 +337,7 @@ async fn main() -> Result<()> {
                 } else {
                     capture_remote_client(args).await?;
                 }
+
                 #[cfg(feature = "libpcap")]
                 capture_remote_client(args).await?;
             }
