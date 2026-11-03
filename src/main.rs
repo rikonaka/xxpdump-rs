@@ -16,9 +16,9 @@ use std::iter::zip;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::sync::atomic::AtomicBool;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::atomic::Ordering;
+use std::sync::atomic::AtomicUsize;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
-use std::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::Ordering;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use std::time::Instant;
 
@@ -231,6 +231,18 @@ fn list_interface() -> Result<()> {
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+static PACKET_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+fn add_packet_count(num: usize) {
+    PACKET_COUNT.fetch_add(num, Ordering::Relaxed);
+}
+
+fn get_packets_count() -> usize {
+    PACKET_COUNT.load(Ordering::Relaxed)
+}
+
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 fn print_filter_examples() {
     let examples = vec![
         "host 192.168.1.1 and !tcp",
@@ -260,6 +272,7 @@ const WAIT_TOO_LONG_INFO: &str = "
 >>> note that forcibly exiting now will result in the loss of captured packets (tcpdump also has this problem),
 >>> please set -N for nonblock mode next time if you want to stop it immediately,
 >>> but this may cause higher CPU usage when capture traffic is heavy.
+>>> total packet count: {total_packet_count}.
 ";
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -278,7 +291,10 @@ async fn main() -> Result<()> {
                         let elapsed = start.elapsed().as_secs_f32();
                         if elapsed > 1.5 {
                             let elapsed_str = format!("{:.2}", elapsed);
-                            let msg = WAIT_TOO_LONG_INFO.replace("{elapsed_str}", &elapsed_str);
+                            let packet_count = get_packets_count();
+                            let msg = WAIT_TOO_LONG_INFO
+                                .replace("{elapsed_str}", &elapsed_str)
+                                .replace("{total_packet_count}", &packet_count.to_string());
                             println!("{}", msg);
                         }
                     }
@@ -293,14 +309,14 @@ async fn main() -> Result<()> {
             "server" => {
                 println!(
                     "server total recved packet: {}",
-                    SERVRE_TOTAL_RECVED.load(SeqCst)
+                    SERVRE_TOTAL_RECVED.load(Ordering::SeqCst)
                 );
                 std::process::exit(0);
             }
             "client" => {
                 println!(
                     "client total recved packet: {}",
-                    CLIENT_TOTAL_SEND.load(SeqCst)
+                    CLIENT_TOTAL_SEND.load(Ordering::SeqCst)
                 );
                 std::process::exit(0);
             }

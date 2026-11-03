@@ -14,6 +14,8 @@ use crate::CliArgs;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::SHOULD_EXIT;
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
+use crate::add_packet_count;
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 use crate::split::SplitRule;
 
 #[cfg(feature = "libpnet")]
@@ -44,26 +46,18 @@ pub fn capture_local(args: CliArgs) -> Result<()> {
         }
     }
 
-    let mut start = Instant::now();
-    let kill = args.kill;
     let mut total_recved = 0;
     while !SHOULD_EXIT.load(Ordering::SeqCst) {
         match cap.next_as_pcapng() {
             Ok(block) => {
                 total_recved += 1;
+                add_packet_count(1);
                 match block {
                     GeneralBlock::EnhancedPacketBlock(epb) => split_rule.append(epb)?,
                     _ => (), // ignore the non-epb block, due to libpnet only return epb block data
                 }
             }
             Err(_e) => (), // ignore the error, just try to capture the next packet
-        }
-
-        if let Some(k) = kill {
-            if k >= start.elapsed().as_secs_f32() {
-                println!("total captured packet: {}", total_recved);
-                start = Instant::now();
-            }
         }
     }
 
@@ -73,8 +67,6 @@ pub fn capture_local(args: CliArgs) -> Result<()> {
 
 #[cfg(feature = "libpcap")]
 pub fn capture_local(args: CliArgs) -> Result<()> {
-    use std::time::Instant;
-
     let mut cap = Capture::new(&args.interface)?;
     cap.set_promiscuous_mode(args.promisc);
     cap.set_immediate_mode(args.immediate);
@@ -98,23 +90,16 @@ pub fn capture_local(args: CliArgs) -> Result<()> {
         }
     }
 
-    let mut start = Instant::now();
-    let kill = args.kill;
     let mut total_recved = 0;
     while !SHOULD_EXIT.load(Ordering::SeqCst) {
         let blocks = cap.fetch_as_pcapng()?;
-        total_recved += blocks.len();
+        let bl = blocks.len();
+        total_recved += bl;
+        add_packet_count(bl);
         for block in blocks {
             match block {
                 GeneralBlock::EnhancedPacketBlock(epb) => split_rule.append(epb)?,
                 _ => (), // ignore the non-epb block, due to pcapture only return epb block data
-            }
-        }
-
-        if let Some(k) = kill {
-            if k >= start.elapsed().as_secs_f32() {
-                println!("total captured packet: {}", total_recved);
-                start = Instant::now();
             }
         }
     }
