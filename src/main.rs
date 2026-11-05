@@ -238,7 +238,8 @@ fn add_packet_count(num: usize) {
     PACKET_COUNT.fetch_add(num, Ordering::Relaxed);
 }
 
-fn get_packets_count() -> usize {
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
+fn get_packet_count() -> usize {
     PACKET_COUNT.load(Ordering::Relaxed)
 }
 
@@ -291,7 +292,7 @@ async fn main() -> Result<()> {
                         let elapsed = start.elapsed().as_secs_f32();
                         if elapsed > 1.5 {
                             let elapsed_str = format!("{:.2}", elapsed);
-                            let packet_count = get_packets_count();
+                            let packet_count = get_packet_count();
                             let msg = WAIT_TOO_LONG_INFO
                                 .replace("{elapsed_str}", &elapsed_str)
                                 .replace("{total_packet_count}", &packet_count.to_string());
