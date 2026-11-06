@@ -140,6 +140,10 @@ struct CliArgs {
     /// This will limit the number of files created to the specified number, and begin overwriting files from the beginning
     #[arg(long, alias = "mfc", requires = "write", default_value_t = 10)]
     max_file_count: usize,
+
+    /// Which packet capture library is being used
+    #[arg(short, long, action, default_value_t = false)]
+    library: bool,
 }
 
 #[cfg(feature = "libpnet")]
@@ -262,6 +266,16 @@ fn print_filter_examples() {
     }
 }
 
+#[cfg(feature = "libpnet")]
+fn print_library_version() {
+    println!("xxpdump with libpnet");
+}
+
+#[cfg(feature = "libpcap")]
+fn print_library_version() {
+    println!("xxpdump with libpcap");
+}
+
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -280,9 +294,9 @@ const WAIT_TOO_LONG_INFO: &str = "
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = CliArgs::parse();
-
     let mode = args.mode.clone();
     let mut start: Option<Instant> = None;
+
     ctrlc::set_handler(move || {
         println!("stop capturing...");
         match mode.as_str() {
@@ -333,6 +347,8 @@ async fn main() -> Result<()> {
         list_interface()?;
     } else if args.filter_examples {
         print_filter_examples();
+    } else if args.library {
+        print_library_version();
     } else {
         println!("xxpdump v{} working...", VERSION);
         match args.mode.as_str() {
