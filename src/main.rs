@@ -287,7 +287,6 @@ const WAIT_TOO_LONG_INFO: &str = "
 >>> note that forcibly exiting now will result in the loss of captured packets (tcpdump also has this problem),
 >>> please set -N for nonblock mode next time if you want to stop it immediately,
 >>> but this may cause higher CPU usage when capture traffic is heavy.
->>> total packet count: {total_packet_count}.
 ";
 
 #[cfg(any(feature = "libpnet", feature = "libpcap"))]
@@ -298,7 +297,8 @@ async fn main() -> Result<()> {
     let mut start: Option<Instant> = None;
 
     ctrlc::set_handler(move || {
-        println!("stop capturing...");
+        let packet_count = get_packet_count();
+        println!("stop capturing ({packet_count})...");
         match mode.as_str() {
             "local" => {
                 match start {
@@ -306,10 +306,7 @@ async fn main() -> Result<()> {
                         let elapsed = start.elapsed().as_secs_f32();
                         if elapsed > 1.5 {
                             let elapsed_str = format!("{:.2}", elapsed);
-                            let packet_count = get_packet_count();
-                            let msg = WAIT_TOO_LONG_INFO
-                                .replace("{elapsed_str}", &elapsed_str)
-                                .replace("{total_packet_count}", &packet_count.to_string());
+                            let msg = WAIT_TOO_LONG_INFO.replace("{elapsed_str}", &elapsed_str);
                             println!("{}", msg);
                         }
                     }
